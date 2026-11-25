@@ -4,6 +4,7 @@ import { createDM } from './dm.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, translatedFrom } from './i18n.js';
 import { translate } from './translate.js';
 import { APP_NAME, logoSvg, flag } from './brand.js';
+import { createGroupCall } from './groupcall.js';
 
 setLang(initialLang());
 startI18n();
@@ -82,6 +83,7 @@ const I = {
   check2: '<path d="m2.5 12.5 4 4 10-10M11.5 16.5l1 0L22 6.5"/>',
   'eye-off': '<path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3.3 3.9M6.3 7.6A17 17 0 0 0 2 12s4 6 10 6a10 10 0 0 0 4.2-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.7-1.5"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   pdf: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h4"/>',
   translate: '<path d="M4 5h9M8.5 3v2M6 5c0 4 3 7 6 8M11 5c0 3-3 7-7 9"/><path d="m13 20 4-9 4 9M14.5 17h5"/>',
@@ -431,7 +433,7 @@ function openDialog({ title, text = '', fields = [], confirm = 'Aceptar', danger
       <h3>${esc(title)}</h3>${text ? `<p class="muted">${text}</p>` : ''}
       ${fields.map((f) => `<label>${esc(f.label)}</label><div class="field">${f.prefix ? `<span>${esc(f.prefix)}</span>` : ''}${f.multiline
         ? `<textarea name="${f.name}" maxlength="${f.max || 300}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>`
-        : `<input name="${f.name}" value="${esc(f.value || '')}" maxlength="${f.max || 100}" placeholder="${esc(f.placeholder || '')}" autocomplete="off" autocapitalize="none" spellcheck="false">`}</div>`).join('')}
+        : `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(f.value || '')}" maxlength="${f.max || 100}" placeholder="${esc(f.placeholder || '')}" autocomplete="${f.type === 'password' ? 'new-password' : 'off'}" autocapitalize="none" spellcheck="false">`}</div>${f.hint ? `<p class="hint">${esc(f.hint)}</p>` : ''}`).join('')}
       <p class="error" role="alert"></p>
       <div class="dialog-actions"><button type="button" class="btn" data-cancel>Cancelar</button><button type="submit" class="btn ${danger ? 'danger' : 'primary'}">${esc(confirm)}</button></div>
     </form>`;
@@ -468,15 +470,15 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.q
 /* ---------- Canales guardados en la base de datos ---------- */
 /** Lee la lista de canales (una consulta). Se repite solo cuando alguien crea o borra un canal. */
 async function loadChannels() {
-  const { data, error } = await supabase.from('channels').select('id, name, topic, owner_id, channel_admins(user_id)').order('name');
+  const { data, error } = await supabase.from('channels').select('id, name, topic, owner_id, is_private, channel_admins(user_id)').order('name');
   if (error) { toast('No se pudo cargar la lista de canales: ' + error.message); return; }
   const map = new Map();
-  for (const c of data) map.set(c.name.toLowerCase(), { id: c.id, name: c.name, topic: c.topic, owner_id: c.owner_id, admins: new Set(c.channel_admins.map((a) => a.user_id)) });
+  for (const c of data) map.set(c.name.toLowerCase(), { id: c.id, name: c.name, topic: c.topic, owner_id: c.owner_id, is_private: c.is_private, admins: new Set(c.channel_admins.map((a) => a.user_id)) });
   // Conserva el objeto de los canales abiertos para no perder el estado en pantalla
   for (const [k, w] of state.windows) {
     if (k === 'status' || w.kind === 'dm') continue;
     const fresh = map.get(k);
-    if (fresh) { Object.assign(w.ch, { topic: fresh.topic, owner_id: fresh.owner_id, admins: fresh.admins }); map.set(k, w.ch); }
+    if (fresh) { Object.assign(w.ch, { topic: fresh.topic, owner_id: fresh.owner_id, is_private: fresh.is_private, admins: fresh.admins }); map.set(k, w.ch); }
   }
   state.channels = map;
 }
@@ -538,6 +540,7 @@ function renderClient() {
         <button class="icon-btn" id="toggle-members" title="Usuarios">${icon('users')}<span id="member-count"></span></button>
         <button class="icon-btn" id="chan-menu" title="Opciones del canal">${icon('dots')}</button>
       </header>
+      <div class="call-banner hidden" id="call-banner"></div>
       <div class="chat-body">
         <div class="log" id="log"></div>
         <aside class="members" id="members"></aside>
@@ -605,7 +608,10 @@ function renderClient() {
     activate(b.dataset.win); closeSide();
   };
   document.getElementById('call-audio').onclick = () => dm.startCall(state.windows.get(state.active), false);
-  document.getElementById('call-video').onclick = () => dm.startCall(state.windows.get(state.active), true);
+  document.getElementById('call-video').onclick = () => {
+    const w = state.windows.get(state.active);
+    if (w?.kind === 'dm') dm.startCall(w, true); else if (w && w.key !== 'status') gc.join(w);
+  };
   document.getElementById('attach-btn').onclick = () => document.getElementById('file-input').click();
   document.getElementById('file-input').onchange = (e) => {
     const w = state.windows.get(state.active);
@@ -833,7 +839,7 @@ function renderChanList() {
   document.getElementById('chan-list').innerHTML = joined.map((w) => {
     const badge = w.unread ? `<span class="badge ${w.mention ? 'mention' : ''}">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
     return `<button data-win="${esc(w.key)}" class="chan ${w.key === state.active ? 'active' : ''} ${w.unread ? 'unread' : ''}">
-      ${icon('hash')}<span class="chan-name">${esc(w.name.slice(1))}</span>${iAmOwner(w) ? `<span class="role owner" title="Tu canal">${icon('crown')}</span>` : ''}${badge}
+      ${icon(w.ch?.is_private ? 'lock' : 'hash')}<span class="chan-name">${esc(w.name.slice(1))}</span>${iAmOwner(w) ? `<span class="role owner" title="Tu canal">${icon('crown')}</span>` : ''}${badge}
       <span class="part" data-part title="Salir del canal">${icon('x')}</span></button>`;
   }).join('') || '<p class="side-empty">Aún no estás en ningún canal.</p>';
 }
@@ -852,7 +858,7 @@ function browserHtml() {
   else if (own) createBox = `<div class="create-box">${icon('crown')}<span>Tu canal es <button class="link" data-join="${esc(own.name)}">${esc(own.name)}</button>. Cada usuario puede crear un canal.</span></div>`;
   else createBox = `<button class="btn primary" data-act="create">${icon('plus')} Crear mi canal</button>`;
   const items = list.map((c) => `<button class="room" data-join="${esc(c.name)}">
-      <span class="room-ico">${icon('hash')}</span>
+      <span class="room-ico ${c.is_private ? 'locked' : ''}" title="${c.is_private ? 'Canal privado' : ''}">${icon(c.is_private ? 'lock' : 'hash')}</span>
       <span class="room-info"><b>${esc(c.name.slice(1))}${state.account && c.owner_id === state.account.id ? ` <span class="role owner" title="Tu canal">${icon('crown')}</span>` : ''}</b><small>${c.topic ? esc(c.topic) : '<i>Sin tema</i>'}</small></span>
       <span class="room-count ${c.n ? 'live' : ''}" title="Personas conectadas">${icon('users')}${c.n}</span></button>`).join('');
   return `<div class="browser" id="browser">
@@ -890,10 +896,12 @@ async function createChannelDialog() {
     fields: [
       { name: 'name', label: 'Nombre', prefix: '#', max: 30, placeholder: 'mi-canal' },
       { name: 'topic', label: 'Tema (opcional)', max: 300, placeholder: '¿De qué se habla aquí?', multiline: true },
+      { name: 'password', label: 'Contraseña (opcional)', type: 'password', max: 72, placeholder: 'Déjala vacía para un canal abierto', hint: 'Con contraseña, el canal es privado: solo entra quien la conozca.' },
     ],
     confirm: 'Crear canal',
-    validate: async ({ name }) => {
+    validate: async ({ name, password }) => {
       const n = '#' + name.replace(/^#/, '');
+      if (password && (password.length < 4 || password.length > 72)) return 'La contraseña debe tener entre 4 y 72 caracteres.';
       if (!CHAN_RE.test(n)) return 'El nombre solo puede tener letras, números, - o _ (máx. 30).';
       if (state.channels.has(n.toLowerCase())) return 'Ya existe un canal con ese nombre.';
       return '';
@@ -901,7 +909,11 @@ async function createChannelDialog() {
   });
   if (!v) return;
   const name = '#' + v.name.replace(/^#/, '');
-  const { error } = await supabase.from('channels').insert({ name, topic: v.topic.slice(0, 300), owner_id: state.account.id }).select().single();
+  const { data: created, error } = await supabase.from('channels').insert({ name, topic: v.topic.slice(0, 300), owner_id: state.account.id }).select('id').single();
+  if (!error && v.password) {
+    const r = await supabase.rpc('set_channel_password', { p_channel: created.id, p_password: v.password });
+    if (r.error) toast(t('No se pudo poner la contraseña:') + ' ' + r.error.message);
+  }
   if (error) {
     if (error.code === '23505' && /owner/.test(error.message + error.details)) return toast('Ya tienes un canal creado.');
     if (error.code === '23505') return toast('Ya existe un canal con ese nombre.');
@@ -923,7 +935,10 @@ function activate(key) {
   const log = document.getElementById('log');
   const isDm = w.kind === 'dm';
   document.getElementById('app').classList.toggle('in-dm', isDm);
-  ['call-audio', 'call-video'].forEach((id) => document.getElementById(id).classList.toggle('hidden', !isDm));
+  document.getElementById('call-audio').classList.toggle('hidden', !isDm);
+  document.getElementById('call-video').classList.toggle('hidden', key === 'status');
+  document.getElementById('call-video').title = isDm ? 'Videollamada' : 'Videollamada grupal';
+  gc.renderBanner(w);
   if (key === 'status') {
     log.innerHTML = browserHtml() + w.lines.join('');
     log.scrollTop = 0;
@@ -934,7 +949,7 @@ function activate(key) {
     log.innerHTML = w.lines.join('') || '<div class="empty">Aún no hay mensajes. ¡Rompe el hielo!</div>';
     log.scrollTop = log.scrollHeight;
   }
-  document.getElementById('win-name').innerHTML = key === 'status' ? esc(w.name) : `${icon('hash', 'title-hash')}<span class="ugc">${esc(w.name.slice(1))}</span>`;
+  document.getElementById('win-name').innerHTML = key === 'status' ? esc(w.name) : `${icon(w.ch?.is_private ? 'lock' : 'hash', 'title-hash')}<span class="ugc">${esc(w.name.slice(1))}</span>`;
   document.getElementById('chan-menu').classList.toggle('hidden', key === 'status');
   state.setActionMode?.(false);
   document.getElementById('input-form').classList.toggle('hidden', key === 'status');
@@ -964,7 +979,7 @@ function renderMembers() {
   const people = sortedPeople(w);
   const admins = people.filter((p) => personIsAdmin(w, p));
   const rest = people.filter((p) => !personIsAdmin(w, p));
-  const row = (p) => `<button class="member" data-cid="${esc(p.cid)}" title="Opciones para ${esc(p.nick)}">${avatarWithRole(p.nick, roleOf(w, p), '<i class="dot on"></i>')}<span class="member-nick" style="${nickStyle(p.nick)}">${esc(p.nick)}</span>${p.reg ? verified : ''}${p.me ? '<small>tú</small>' : ''}</button>`;
+  const row = (p) => `<button class="member" data-cid="${esc(p.cid)}" title="Opciones para ${esc(p.nick)}">${avatarWithRole(p.nick, roleOf(w, p), '<i class="dot on"></i>')}<span class="member-nick" style="${nickStyle(p.nick)}">${esc(p.nick)}</span>${p.reg ? verified : ''}${p.call ? `<span class="in-call" title="En la videollamada">${icon('video')}</span>` : ''}${p.me ? '<small>tú</small>' : ''}</button>`;
   document.getElementById('member-count').textContent = people.length;
   el.innerHTML = (admins.length ? `<div class="side-label">Administradores — ${admins.length}</div>${admins.map(row).join('')}` : '') +
     `<div class="side-label ${admins.length ? 'spaced' : ''}">En línea — ${rest.length}</div>${rest.map(row).join('')}`;
@@ -981,7 +996,7 @@ function completeNick(input) {
 /* Canal en tiempo real (Broadcast + Presence)                           */
 /* ===================================================================== */
 function myPresence(w) {
-  return { nick: state.nick, reg: state.registered, uid: state.account?.id || null, tmp: !!w.myTmp };
+  return { nick: state.nick, reg: state.registered, uid: state.account?.id || null, tmp: !!w.myTmp, call: !!w.inCall };
 }
 async function joinChannel(name) {
   const key = name.toLowerCase();
@@ -990,13 +1005,22 @@ async function joinChannel(name) {
   const ch = state.channels.get(key);
   if (!ch) { toast(`El canal ${name} no existe.`); return activate('status'); }
 
-  const w = { key, name: ch.name, ch, lines: [], people: new Map(), unread: 0, mention: false, last: null, rt: null, ready: false, myTmp: false };
+  // Canal privado: el servidor comprueba la contraseña y entrega el secreto del canal
+  let secret = null;
+  if (ch.is_private) {
+    secret = await privateAccess(ch);
+    if (!secret) return; // contraseña cancelada: se queda donde estaba
+    if (state.windows.has(key)) return activate(key);
+  }
+
+  const w = { key, name: ch.name, ch, lines: [], people: new Map(), unread: 0, mention: false, last: null, rt: null, ready: false, myTmp: false, secret };
   state.windows.set(key, w);
   activate(key);
   sys(key, `Has entrado en <b>${esc(ch.name)}</b>${ch.topic ? ` — ${linkify(ch.topic)}` : ''}`, 'join');
   if (iAmOwner(w)) sys(key, 'Eres el creador de este canal. Toca a un usuario de la lista para nombrarlo administrador.', 'info');
 
-  const rt = supabase.channel('irc:' + key, { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
+  if (ch.is_private) sys(key, `${icon('lock')} ${esc(t('Canal privado: solo entra quien conoce la contraseña.'))}`, 'info');
+  const rt = supabase.channel('irc:' + (secret ? 'p:' + secret : key), { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
   const on = (event, fn) => rt.on('broadcast', { event }, ({ payload }) => payload && fn(payload));
   on('msg', (m) => {
     if (typeof m.body !== 'string' || typeof m.nick !== 'string') return;
@@ -1009,15 +1033,18 @@ async function joinChannel(name) {
   on('admin', (a) => applyAdmin(w, a));
   on('kick', (k) => applyKick(w, k));
   on('deleted', (d) => applyDeleted(w, d));
+  on('rekey', (r) => applyRekey(w, r));
+  on('gc', (g) => gc.onSignal(w, g));
   rt.on('presence', { event: 'sync' }, () => {
     const people = new Map();
     for (const [cid, metas] of Object.entries(rt.presenceState())) {
       const p = metas[0];
       if (!p?.nick) continue;
-      people.set(cid, { cid, nick: p.nick, reg: !!p.reg, uid: p.uid || null, tmp: !!p.tmp, me: cid === state.clientId });
+      people.set(cid, { cid, nick: p.nick, reg: !!p.reg, uid: p.uid || null, tmp: !!p.tmp, call: !!p.call, me: cid === state.clientId });
     }
     w.people = people;
     if (state.active === key) renderMembers();
+    gc.syncPeers(w);
   })
     .on('presence', { event: 'join' }, ({ key: cid, newPresences }) => {
       // Una actualización de estado (nick, cargo) llega como salida + entrada: no se anuncia
@@ -1048,6 +1075,7 @@ function emit(w, event, payload, apply) {
 async function partChannel(key, notice = '') {
   const w = state.windows.get(key);
   if (!w || key === 'status') return;
+  gc.onLeaveChannel(w);
   if (w.rt) await supabase.removeChannel(w.rt);
   state.windows.delete(key);
   trackLobby();
@@ -1213,12 +1241,17 @@ function channelMenu(anchor) {
   }
   const items = [];
   if (iAmPermAdmin(w)) items.push({ label: 'Editar tema', icon: 'edit', onClick: () => editTopic(w) });
+  items.push({ label: participantsInCall(w) ? 'Unirse a la videollamada' : 'Iniciar videollamada grupal', icon: 'video', onClick: () => gc.join(w) });
   items.push({ label: 'Ver administradores', icon: 'shield', onClick: () => adminsDialog(w) });
   items.push({ label: 'Copiar enlace del canal', icon: 'link', onClick: () => navigator.clipboard?.writeText(location.origin + '/#' + w.name.slice(1)).then(() => toast('Enlace copiado')) });
   items.push({ label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) });
   items.push({ label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } });
   items.push('-', { label: 'Salir del canal', icon: 'door', onClick: () => partChannel(w.key) });
-  if (iAmOwner(w)) items.push({ label: 'Eliminar canal', icon: 'trash', danger: true, onClick: () => deleteChannel(w) });
+  if (iAmOwner(w)) {
+    items.push({ label: w.ch.is_private ? 'Cambiar contraseña' : 'Hacer privado (con contraseña)', icon: 'lock', onClick: () => passwordDialog(w) });
+    if (w.ch.is_private) items.push({ label: 'Quitar contraseña (hacer abierto)', icon: 'unlock', onClick: () => changePassword(w, null) });
+    items.push({ label: 'Eliminar canal', icon: 'trash', danger: true, onClick: () => deleteChannel(w) });
+  }
   openMenu(anchor, items, { title: `<span><b>${esc(w.name)}</b><small>${w.ch.owner_id ? (iAmOwner(w) ? 'Tu canal' : iAmAdmin(w) ? 'Eres administrador' : 'Canal de usuario') : 'Canal del sistema'}</small></span>` });
 }
 function userMenu(anchor) {
@@ -1370,3 +1403,67 @@ async function exportPdf(w) {
   frame.contentWindow.print();
   setTimeout(() => frame.remove(), 60000);
 }
+
+/* ---------- Canales privados ---------- */
+const pwKey = (ch) => 'chpw:' + ch.id;
+const sessionGetPw = (ch) => { try { return sessionStorage.getItem(pwKey(ch)); } catch { return null; } };
+const sessionSetPw = (ch, v) => { try { v ? sessionStorage.setItem(pwKey(ch), v) : sessionStorage.removeItem(pwKey(ch)); } catch { /* nada */ } };
+/** Devuelve el secreto del canal privado (pidiendo la contraseña si hace falta) o null si se cancela. */
+async function privateAccess(ch) {
+  const ask = async (pw) => supabase.rpc('channel_access', { p_channel: ch.id, p_password: pw ?? null });
+  let r = await ask(sessionGetPw(ch));
+  if (!r.error && r.data) return r.data;
+  if (r.error && r.error.code !== '28P01') { toast(r.error.message); return null; }
+  let secret = null;
+  const v = await openDialog({
+    title: `${ch.name}`,
+    text: esc(t('Este canal es privado. Escribe la contraseña para entrar.')),
+    fields: [{ name: 'pw', label: 'Contraseña', type: 'password', max: 72 }],
+    confirm: 'Entrar',
+    validate: async ({ pw }) => {
+      if (!pw) return t('Escribe la contraseña.');
+      r = await ask(pw);
+      if (r.error) return r.error.code === '28P01' ? t('Contraseña incorrecta.') : r.error.message;
+      secret = r.data;
+      sessionSetPw(ch, pw);
+      return '';
+    },
+  });
+  return v ? secret : null;
+}
+async function passwordDialog(w) {
+  const v = await openDialog({
+    title: w.ch.is_private ? 'Cambiar contraseña' : 'Hacer privado (con contraseña)',
+    text: esc(t('Las personas conectadas (salvo los administradores registrados) tendrán que volver a entrar con la nueva contraseña.')),
+    fields: [{ name: 'pw', label: 'Nueva contraseña', type: 'password', max: 72, placeholder: 'Entre 4 y 72 caracteres' }],
+    confirm: 'Guardar',
+    validate: async ({ pw }) => (pw.length < 4 || pw.length > 72 ? t('La contraseña debe tener entre 4 y 72 caracteres.') : ''),
+  });
+  if (v) changePassword(w, v.pw);
+}
+async function changePassword(w, pw) {
+  const { error } = await supabase.rpc('set_channel_password', { p_channel: w.ch.id, p_password: pw });
+  if (error) return toast(error.message);
+  sessionSetPw(w.ch, pw);
+  // Todos salen del canal anterior; el creador vuelve a entrar al nuevo
+  emit(w, 'rekey', { private: !!pw });
+  announceChannelsChanged();
+  const name = w.name;
+  await partChannel(w.key);
+  await loadChannels();
+  toast(pw ? t('Contraseña guardada.') : t('El canal ahora es abierto.'));
+  joinChannel(name);
+}
+function applyRekey(w, r, local = false) {
+  if (local) return;
+  if (!(r.byCid && w.people.get(r.byCid)?.uid === w.ch.owner_id)) return;
+  sessionSetPw(w.ch, null);
+  const name = w.name;
+  partChannel(w.key, `<b>${esc(r.by)}</b> ${esc(t('cambió el acceso a'))} <b>${esc(name)}</b>. ${esc(t('Vuelve a entrar para seguir.'))}`);
+  toast(`${name}: ${t('cambió el acceso. Vuelve a entrar.')}`);
+  loadChannels().then(() => { renderBrowser(); renderChanList(); });
+}
+
+/* ---------- Videollamadas grupales ---------- */
+const participantsInCall = (w) => [...(w.people?.values() || [])].filter((p) => p.call).length;
+const gc = createGroupCall({ state, esc, icon, avatar, toast, t, retrack: (w) => w.rt?.track(myPresence(w)) });

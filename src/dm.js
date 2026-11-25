@@ -18,7 +18,7 @@ const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo
 const CHUNK = 32 * 1024;
 const REQUEST_TIMEOUT = 60 * 1000;
 
-function iceServers() {
+export function iceServers() {
   const servers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
   const turn = import.meta.env.VITE_TURN_URL;
   if (turn) servers.push({ urls: turn.split(','), username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL });
