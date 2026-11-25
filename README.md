@@ -1,32 +1,32 @@
-# Chat IRC
+# ChamuFlac
 
-Chat web al estilo del clásico mIRC: canales (`#general`), nicks, lista de usuarios conectados y comandos `/join`, `/me`, `/nick`, `/topic`…
+Chat web en tiempo real, sin instalar nada: canales temáticos, privados cifrados con fotos,
+vídeos, documentos y notas de voz, llamadas y videollamadas (también grupales), traducción
+automática entre idiomas y **sin historial** (las conversaciones no se guardan; se pueden
+exportar a PDF).
+
+**Web:** https://chat-irc.vercel.app
+
+## Tecnología
 
 - **Frontend:** Vite + JavaScript, publicado en **Vercel**.
-- **Backend:** **Supabase**, con PostgreSQL para guardar el historial y Realtime para los mensajes al instante y la presencia.
+- **Backend:** **Supabase** — Realtime (Broadcast/Presence) para los mensajes, Auth (correo y
+  Google) y una base de datos mínima (nicks reservados, canales y administradores).
+- **Privados y llamadas:** WebRTC directo entre navegadores (cifrado de extremo a extremo), con
+  TURN de Metered vía la Edge Function `turn` y un plan B por Realtime.
+- **Idiomas:** español, inglés, portugués, francés e italiano.
 
-## Puesta en marcha
+## Desarrollo
 
-1. En Supabase, abre el **SQL Editor**, pega `supabase/migrations/0001_base.sql` y pulsa **Run**.
-2. En Supabase, activa **Authentication → Sign In / Providers → Allow anonymous sign-ins**.
-3. Para desarrollar en local:
+```bash
+npm install
+```
 
-   ```bash
-   cp .env.example .env.local
-   ```
+```bash
+npm run dev
+```
 
-   Rellena `.env.local` con tus datos de Supabase y ejecuta:
+Las migraciones de la base de datos están en `supabase/migrations/` (se ejecutan en orden en el
+SQL Editor de Supabase) y la función TURN en `supabase/functions/turn/`.
 
-   ```bash
-   npm install
-   ```
-
-   ```bash
-   npm run dev
-   ```
-
-4. En Vercel, importa este repositorio y añade las variables `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
-
-## Comandos
-
-`/join #canal`, `/part`, `/me acción`, `/nick nuevo`, `/topic texto`, `/list`, `/clear`, `/help`, `/quit`
+Más detalles de arquitectura y estado del proyecto en [`CLAUDE.md`](CLAUDE.md).
