@@ -1,5 +1,5 @@
 import './style.css';
-import { supabase, configured } from './supabase.js';
+import { supabase, configured, configError } from './supabase.js';
 
 const root = document.getElementById('root');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -16,7 +16,15 @@ const state = {
 /* Arranque                                                              */
 /* ===================================================================== */
 if (!configured) renderSetupHelp();
-else boot();
+else if (configError) renderFatal(configError);
+else boot().catch((e) => renderFatal(e.message || String(e)));
+window.addEventListener('unhandledrejection', (e) => console.error(e.reason));
+
+function renderFatal(msg) {
+  root.innerHTML = `<div class="dialog"><div class="titlebar">Chat IRC — error</div><div class="dialog-body">
+    <p class="error">${esc(msg)}</p>
+    <p>Revisa las variables de entorno en Vercel (<i>Settings → Environment Variables</i>) y vuelve a desplegar.</p></div></div>`;
+}
 
 function renderSetupHelp() {
   root.innerHTML = `<div class="dialog"><div class="titlebar">Chat IRC — configuración pendiente</div><div class="dialog-body">
