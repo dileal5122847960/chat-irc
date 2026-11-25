@@ -18,11 +18,36 @@ const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo
 const CHUNK = 32 * 1024;
 const REQUEST_TIMEOUT = 60 * 1000;
 
+// Servidores para establecer conexiones directas. STUN siempre; TURN (Cloudflare, vía la
+// Edge Function "turn" de Supabase) cuando está configurado, para redes que bloquean
+// la conexión directa (datos móviles, redes de empresa…).
+const DEFAULT_ICE = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+let ice = DEFAULT_ICE;
+let iceExpires = 0;
+let iceLoading = null;
 export function iceServers() {
-  const servers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
   const turn = import.meta.env.VITE_TURN_URL;
-  if (turn) servers.push({ urls: turn.split(','), username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL });
-  return servers;
+  if (turn) return [...ice, { urls: turn.split(','), username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }];
+  return ice;
+}
+/** Pide credenciales TURN temporales (si la función existe). Se renuevan cada pocas horas. */
+export function loadIceServers(supabaseUrl, apiKey) {
+  if (Date.now() < iceExpires) return Promise.resolve(ice);
+  if (iceLoading) return iceLoading;
+  iceLoading = (async () => {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`${supabaseUrl}/functions/v1/turn`, { headers: { apikey: apiKey }, signal: ctrl.signal });
+      if (!res.ok) throw new Error('sin TURN');
+      const data = await res.json();
+      const list = Array.isArray(data.iceServers) ? data.iceServers : data.iceServers ? [data.iceServers] : [];
+      if (list.length) { ice = [...DEFAULT_ICE, ...list]; iceExpires = Date.now() + 6 * 3600 * 1000; }
+    } catch { iceExpires = Date.now() + 10 * 60 * 1000; /* se reintenta más tarde */ }
+    iceLoading = null;
+    return ice;
+  })();
+  return iceLoading;
 }
 
 export function createDM(ctx) {
@@ -178,6 +203,7 @@ export function createDM(ctx) {
 
   /* ---------------- Señalización y conexión WebRTC ---------------- */
   async function joinSignaling(w) {
+    await ctx.ensureIce?.();
     const rt = supabase.channel('dm:' + w.id, { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
     w.rt = rt;
     rt.on('broadcast', { event: 'sig' }, ({ payload }) => payload && payload.from === w.peer.cid && handleSignal(w, payload))

@@ -48,6 +48,7 @@ export function createGroupCall(ctx) {
     } catch {
       try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); toast(t('No se pudo usar la cámara; la llamada será solo de voz.')); } catch { return toast(t('Permite el acceso al micrófono y a la cámara para llamar.')); }
     }
+    await ctx.ensureIce?.();
     call = { w, stream, peers: new Map(), micOn: true, camOn: !!stream.getVideoTracks()[0], startedAt: Date.now() };
     w.inCall = true;
     ctx.retrack(w); // la presencia anuncia que estamos en la llamada

@@ -1,6 +1,6 @@
 import './style.css';
-import { supabase, configured, configError } from './supabase.js';
-import { createDM } from './dm.js';
+import { supabase, configured, configError, SUPABASE_URL, SUPABASE_KEY } from './supabase.js';
+import { createDM, loadIceServers } from './dm.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, translatedFrom } from './i18n.js';
 import { translate } from './translate.js';
 import { APP_NAME, logoSvg, flag } from './brand.js';
@@ -500,6 +500,7 @@ function cidIsAdmin(w, cid) { const p = w.people.get(cid); return !!p && personI
 function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
+  loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
   renderClient();
   activate('status');
   loadChannels().then(() => {
@@ -1343,7 +1344,7 @@ function loopTone(kind) {
 /* ---------- Privados ---------- */
 const dm = createDM({
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
-  sys, addHtml, activate: (k) => activate(k), renderChanList: () => renderChanList(), updateTitle: () => updateTitle(),
+  sys, addHtml, activate: (k) => activate(k), ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY), renderChanList: () => renderChanList(), updateTitle: () => updateTitle(),
 });
 function openPrivate(cid) {
   const w = state.windows.get(state.active);
@@ -1470,4 +1471,4 @@ function applyRekey(w, r, local = false) {
 
 /* ---------- Videollamadas grupales ---------- */
 const participantsInCall = (w) => [...(w.people?.values() || [])].filter((p) => p.call).length;
-const gc = createGroupCall({ state, esc, icon, avatar, toast, t, retrack: (w) => w.rt?.track(myPresence(w)) });
+const gc = createGroupCall({ state, esc, icon, avatar, toast, t, ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY), retrack: (w) => w.rt?.track(myPresence(w)) });

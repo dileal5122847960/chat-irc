@@ -11,6 +11,8 @@ const url = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_URL).trim().replace(/^
 const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_KEY).trim().replace(/^["']|["']$/g, '');
 
 export const configured = Boolean(url && anonKey);
+export const SUPABASE_URL = url;
+export const SUPABASE_KEY = anonKey;
 export let configError = '';
 export let supabase = null;
 
