@@ -20,6 +20,7 @@ const MAX_MSG = 1000;
 const state = {
   clientId: crypto.randomUUID(), // identifica esta pestaña en Presence
   account: null, // { id, nick, email } si hay sesión iniciada
+  pendingUser: null, // sesión iniciada sin nick todavía (p. ej. primera vez con Google)
   nick: null,
   registered: false,
   windows: new Map(), // clave -> ventana ('status' o '#canal' en minúsculas)
@@ -70,15 +71,18 @@ function renderNotice(title, html) {
 async function boot() {
   connectLobby();
   const { data: { session } } = await supabase.auth.getSession();
-  if (session && !session.user.is_anonymous) await loadAccount(session.user);
-  else if (session) await supabase.auth.signOut(); // restos del sistema anterior
+  if (session && session.user.is_anonymous) await supabase.auth.signOut(); // restos del sistema anterior
+  else if (session) await loadAccount(session.user);
+  if (location.hash.includes('access_token') || location.search.includes('code=')) history.replaceState(null, '', location.pathname);
   renderHome();
 }
+/** Carga el perfil de la cuenta. Si aún no tiene nick, queda pendiente de elegirlo. */
 async function loadAccount(user) {
-  const { data: profile, error } = await supabase.from('profiles').select('nick').eq('id', user.id).maybeSingle();
-  if (error || !profile) { state.account = null; return false; }
-  state.account = { id: user.id, nick: profile.nick, email: user.email };
-  return true;
+  const { data: profile } = await supabase.from('profiles').select('nick').eq('id', user.id).maybeSingle();
+  if (profile) { state.account = { id: user.id, nick: profile.nick, email: user.email }; state.pendingUser = null; return true; }
+  state.account = null;
+  state.pendingUser = user;
+  return false;
 }
 
 /* ---------- Lobby global (presencia) ---------- */
@@ -141,122 +145,152 @@ async function nickProblem(nick, { forAccount = null } = {}) {
 /* ===================================================================== */
 /* Pantalla principal                                                    */
 /* ===================================================================== */
-let homeTab = 'guest';
-function initialChannel() {
-  const h = decodeURIComponent(location.hash.slice(1));
-  return CHAN_RE.test('#' + h.replace(/^#/, '')) ? h.replace(/^#/, '') : store.get('lastChannel') || 'general';
+// Vistas: 'guest' (por defecto), 'login', 'register'.
+// Con sesión iniciada: bienvenida (si tiene nick) o elección de nick (p. ej. primera vez con Google).
+let homeView = 'guest';
+const GOOGLE_SVG = '<svg class="ico" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2A11.9 11.9 0 0 1 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3a12 12 0 0 1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>';
+/** Canal indicado en la dirección (chat-irc.vercel.app/#canal), si lo hay. */
+function linkedChannel() {
+  const h = decodeURIComponent(location.hash.slice(1)).replace(/^#/, '');
+  return h && CHAN_RE.test('#' + h) ? '#' + h : null;
 }
-function channelField(value) {
-  return `<label for="chan">Canal</label>
-    <div class="field"><span>#</span><input id="chan" name="chan" value="${esc(value)}" maxlength="30" autocapitalize="none" spellcheck="false" placeholder="general" required></div>
-    <div class="active-chans" id="active-chans"></div>`;
+const nickField = (v) => `<label for="nick">Nick</label>
+  <div class="field"><span>@</span><input id="nick" name="nick" value="${esc(v)}" maxlength="20" autocomplete="nickname" autocapitalize="none" spellcheck="false" placeholder="tu_nick" required></div>`;
+const googleBtn = `<button type="button" class="btn google block" id="google-btn">${GOOGLE_SVG} Continuar con Google</button>`;
+
+/** Propone un nick válido a partir del nombre o el correo de la cuenta. */
+function suggestNick(user) {
+  const m = user?.user_metadata || {};
+  const base = (m.nick || m.preferred_username || m.name || m.full_name || (user?.email || '').split('@')[0] || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-[\]{}^|]/g, '');
+  const nick = base.replace(/^[^A-Za-z_[\]{}^|]+/, '').slice(0, 20);
+  return nick.length >= 2 ? nick : '';
 }
+
 function renderHome(message = '', kind = 'error') {
   state.nick = null;
-  const chan = initialChannel();
-  const msg = message ? `<p class="${kind}" role="alert">${message}</p>` : '<p class="error" role="alert"></p>';
+  const msg = `<p class="${message ? kind : 'error'}" role="alert">${message}</p>`;
   let body;
   if (state.account) {
     body = `<div class="welcome-back">${avatar(state.account.nick)}<div><b>Hola, ${esc(state.account.nick)} ${verified}</b><small class="muted">${esc(state.account.email || '')}</small></div></div>
-      <form id="home-form">${channelField(chan)}${msg}<button class="btn primary block" type="submit">Entrar al canal</button></form>
+      <form id="home-form">${msg}<button class="btn primary block" type="submit">Entrar al chat</button></form>
       <button class="btn ghost block" id="logout-btn">${icon('logout')} Cerrar sesión</button>`;
+  } else if (state.pendingUser) {
+    body = `<div class="welcome-back"><span class="avatar">${icon('check')}</span><div><b>Sesión iniciada</b><small class="muted">${esc(state.pendingUser.email || '')}</small></div></div>
+      <p class="lead">Elige el nick que quieres reservar. Será solo tuyo.</p>
+      <form id="home-form">${nickField(suggestNick(state.pendingUser))}${msg}<button class="btn primary block" type="submit">Reservar nick y entrar</button></form>
+      <button class="btn ghost block" id="logout-btn">${icon('logout')} Usar otra cuenta</button>`;
+  } else if (homeView === 'guest') {
+    body = `<form id="home-form">${nickField(store.get('lastNick'))}${msg}<button class="btn primary block" type="submit">Entrar al chat</button></form>
+      <div class="divider"><span>o reserva tu nick</span></div>
+      ${googleBtn}
+      <p class="alt-links"><button type="button" class="link" data-view="login">Iniciar sesión con correo</button> · <button type="button" class="link" data-view="register">Crear cuenta</button></p>`;
   } else {
-    const tabs = [['guest', 'Invitado'], ['login', 'Iniciar sesión'], ['register', 'Crear cuenta']];
-    const nickField = (v = store.get('lastNick')) => `<label for="nick">Nick</label>
-      <div class="field"><span>@</span><input id="nick" name="nick" value="${esc(v)}" maxlength="20" autocomplete="nickname" autocapitalize="none" spellcheck="false" placeholder="tu_nick" required></div>`;
+    const isLogin = homeView === 'login';
     const email = `<label for="email">Correo</label><div class="field"><input id="email" name="email" type="email" autocomplete="email" placeholder="tu@correo.com" required></div>`;
-    const pass = (auto) => `<label for="password">Contraseña</label><div class="field"><input id="password" name="password" type="password" minlength="8" autocomplete="${auto}" placeholder="Mínimo 8 caracteres" required></div>`;
-    const forms = {
-      guest: `${nickField()}${channelField(chan)}<p class="hint">Sin registro. Los nicks de usuarios registrados están reservados.</p>${msg}<button class="btn primary block" type="submit">Entrar al chat</button>`,
-      login: `${email}${pass('current-password')}${channelField(chan)}${msg}<button class="btn primary block" type="submit">Iniciar sesión y entrar</button>`,
-      register: `${nickField('')}${email}${pass('new-password')}<p class="hint">Al registrarte, tu nick queda reservado: nadie más podrá usarlo.</p>${msg}<button class="btn primary block" type="submit">Crear cuenta</button>`,
-    };
-    body = `<div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" data-tab="${k}" class="${homeTab === k ? 'active' : ''}">${l}</button>`).join('')}</div>
-      <form id="home-form">${forms[homeTab]}</form>`;
+    const pass = `<label for="password">Contraseña</label><div class="field"><input id="password" name="password" type="password" minlength="8" autocomplete="${isLogin ? 'current-password' : 'new-password'}" placeholder="Mínimo 8 caracteres" required></div>`;
+    body = `<button type="button" class="link back" data-view="guest">← Volver</button>
+      <h2 class="view-title">${isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</h2>
+      ${googleBtn}
+      <div class="divider"><span>o con tu correo</span></div>
+      <form id="home-form">${isLogin ? email + pass : nickField('') + email + pass + '<p class="hint">Tu nick quedará reservado: nadie más podrá usarlo.</p>'}${msg}
+        <button class="btn primary block" type="submit">${isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</button></form>
+      <p class="alt-links">${isLogin ? '¿No tienes cuenta? <button type="button" class="link" data-view="register">Crear cuenta</button>' : '¿Ya tienes cuenta? <button type="button" class="link" data-view="login">Iniciar sesión</button>'}</p>`;
   }
   root.innerHTML = `<div class="auth"><div class="auth-card">
     <div class="brand"><span class="logo">#</span><div><h1>Chat IRC</h1><p class="muted">Canales, nicks y conversación en tiempo real</p></div></div>
     ${body}
     <p class="muted small center note">Las conversaciones no se guardan: solo ves lo que se dice mientras estás conectado.</p>
   </div></div>`;
-  renderActiveChannels();
 
-  root.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { homeTab = b.dataset.tab; renderHome(); }));
+  root.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => { homeView = b.dataset.view; renderHome(); }));
+  document.getElementById('google-btn')?.addEventListener('click', signInWithGoogle);
   const logout = document.getElementById('logout-btn');
-  if (logout) logout.onclick = async () => { await supabase.auth.signOut(); state.account = null; homeTab = 'login'; renderHome('Sesión cerrada.', 'ok'); };
+  if (logout) logout.onclick = async () => { await supabase.auth.signOut(); state.account = null; state.pendingUser = null; homeView = 'guest'; renderHome('Sesión cerrada.', 'ok'); };
   const form = document.getElementById('home-form');
-  form.querySelector('input')?.focus();
+  const first = [...form.querySelectorAll('input')].find((i) => !i.value) || form.querySelector('input');
+  if (matchMedia('(pointer:fine)').matches) first?.focus();
   form.onsubmit = (e) => { e.preventDefault(); submitHome(form); };
 }
 function renderActiveChannels() {
-  const el = document.getElementById('active-chans');
-  if (!el) return;
-  const list = activeChannels().slice(0, 8);
-  el.innerHTML = list.length
-    ? `<small class="muted">Activos ahora:</small> ${list.map((c) => `<button type="button" class="chip" data-chan="${esc(c.name.slice(1))}">${esc(c.name)} <b>${c.n}</b></button>`).join('')}`
-    : '';
-  el.querySelectorAll('[data-chan]').forEach((b) => (b.onclick = () => { document.getElementById('chan').value = b.dataset.chan; }));
+  // La lista de canales se muestra dentro del chat (ventana "Canales").
+  if (state.active === 'status' && document.getElementById('browser')) renderBrowser();
 }
 function setHomeError(form, text, kind = 'error') {
   const p = form.querySelector('[role=alert]');
   p.className = kind; p.innerHTML = text;
 }
+
+async function signInWithGoogle() {
+  const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + '/' + location.hash } });
+  if (error) {
+    const form = document.getElementById('home-form');
+    setHomeError(form, /not enabled|unsupported provider/i.test(error.message) ? 'El acceso con Google todavía no está activado.' : esc(error.message));
+  }
+}
+
 async function submitHome(form) {
   const btn = form.querySelector('button[type=submit]');
   const label = btn.textContent;
   const done = () => { btn.disabled = false; btn.textContent = label; };
   btn.disabled = true; btn.textContent = 'Comprobando…';
   setHomeError(form, '');
-  const chanInput = form.chan?.value.trim().replace(/^#/, '');
-  const channel = chanInput !== undefined ? '#' + (chanInput || 'general') : null;
-  if (channel && !CHAN_RE.test(channel)) { done(); return setHomeError(form, 'Nombre de canal no válido: letras, números, - o _.'); }
+  const fail = (html) => { done(); setHomeError(form, html); };
+  const channel = linkedChannel();
 
   try {
+    // Con sesión y nick: entrar
     if (state.account) {
       const problem = await nickProblem(state.account.nick, { forAccount: state.account.id });
-      if (problem) { done(); return setHomeError(form, esc(problem)); }
+      if (problem) return fail(esc(problem));
       return enterChat(state.account.nick, true, channel);
     }
-    if (homeTab === 'guest') {
+    // Con sesión pero sin nick (primera vez con Google): reservarlo
+    if (state.pendingUser) {
       const nick = form.nick.value.trim();
       const problem = await nickProblem(nick);
-      if (problem) { done(); return setHomeError(form, esc(problem)); }
+      if (problem) return fail(esc(problem));
+      const { data, error } = await supabase.rpc('claim_nick', { p_nick: nick });
+      if (error) return fail(error.code === '23505' ? `El nick ${esc(nick)} acaba de ser reservado por otra persona.` : error.code === '23514' ? 'Ese nick no es válido.' : esc(error.message));
+      state.account = { id: state.pendingUser.id, nick: data || nick, email: state.pendingUser.email };
+      state.pendingUser = null;
+      return enterChat(state.account.nick, true, channel);
+    }
+    // Invitado
+    if (homeView === 'guest') {
+      const nick = form.nick.value.trim();
+      const problem = await nickProblem(nick);
+      if (problem) return fail(esc(problem));
       store.set('lastNick', nick);
       return enterChat(nick, false, channel);
     }
-    if (homeTab === 'login') {
+    // Iniciar sesión con correo
+    if (homeView === 'login') {
       const { data, error } = await supabase.auth.signInWithPassword({ email: form.email.value.trim(), password: form.password.value });
-      if (error) { done(); return setHomeError(form, error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message === 'Email not confirmed' ? 'Aún no confirmaste tu correo. Revisa tu bandeja de entrada.' : esc(error.message)); }
-      if (!(await loadAccount(data.user))) { done(); return setHomeError(form, 'No se encontró el perfil de esta cuenta.'); }
-      const problem = await nickProblem(state.account.nick, { forAccount: state.account.id });
-      if (problem) { done(); return setHomeError(form, esc(problem)); }
-      return enterChat(state.account.nick, true, channel);
+      if (error) return fail(error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message === 'Email not confirmed' ? 'Aún no confirmaste tu correo. Revisa tu bandeja de entrada.' : esc(error.message));
+      await loadAccount(data.user);
+      return renderHome();
     }
-    if (homeTab === 'register') {
+    // Crear cuenta con correo
+    if (homeView === 'register') {
       const nick = form.nick.value.trim();
       const problem = await nickProblem(nick);
-      if (problem) { done(); return setHomeError(form, esc(problem)); }
+      if (problem) return fail(esc(problem));
       const { data, error } = await supabase.auth.signUp({
         email: form.email.value.trim(), password: form.password.value,
-        options: { data: { nick }, emailRedirectTo: location.origin },
+        options: { data: { nick }, emailRedirectTo: location.origin + '/' },
       });
-      if (error) {
-        done();
-        if (/database error/i.test(error.message)) return setHomeError(form, `El nick ${esc(nick)} acaba de ser reservado por otra persona.`);
-        if (/already registered|already exists/i.test(error.message)) return setHomeError(form, 'Ese correo ya tiene una cuenta. Inicia sesión.');
-        return setHomeError(form, esc(error.message));
-      }
+      if (error) return fail(/already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : esc(error.message));
       store.set('lastNick', nick);
       if (data.session) {
         await loadAccount(data.user);
-        return renderHome(`¡Cuenta creada! Tu nick <b>${esc(nick)}</b> está reservado.`, 'ok');
+        return renderHome(state.account ? `¡Cuenta creada! Tu nick <b>${esc(state.account.nick)}</b> está reservado.` : 'Cuenta creada, pero ese nick ya se ocupó. Elige otro.', state.account ? 'ok' : 'error');
       }
-      homeTab = 'login';
+      homeView = 'login';
       return renderHome(`Te enviamos un correo a <b>${esc(form.email.value.trim())}</b>. Confírmalo y luego inicia sesión.`, 'ok');
     }
   } catch (e) {
-    done();
-    setHomeError(form, esc(e.message || String(e)));
+    fail(esc(e.message || String(e)));
   }
 }
 
@@ -278,9 +312,9 @@ const COMMANDS = [
 function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
-  store.set('lastChannel', channel.slice(1));
   renderClient();
-  joinChannel(channel);
+  if (channel) joinChannel(channel);
+  else activate('status');
 }
 
 function renderClient() {
@@ -323,7 +357,7 @@ function renderClient() {
     </main>
   </div>`;
   state.windows.clear();
-  state.windows.set('status', { key: 'status', name: 'Inicio', lines: [], unread: 0, mention: false, last: null });
+  state.windows.set('status', { key: 'status', name: 'Canales', lines: [], unread: 0, mention: false, last: null });
   updateMe();
   updateThemeBtn();
   bindComposer();
@@ -517,7 +551,43 @@ function renderLiveList() {
   el.innerHTML = list.slice(0, 15).map((c) => `<button class="chan" data-join="${esc(c.name)}">${icon('hash')}<span class="chan-name">${esc(c.name.slice(1))}</span><span class="count">${c.n}</span></button>`).join('')
     || '<p class="side-empty">No hay otros canales activos.</p>';
 }
-function refreshListIfOpen() { renderLiveList(); }
+function refreshListIfOpen() { renderLiveList(); renderActiveChannels(); }
+
+/** Lista de canales activos + crear/unirse (ventana "Canales"). */
+function browserHtml() {
+  const list = activeChannels();
+  const joined = (k) => state.windows.has(k);
+  const items = list.map((c) => `<button class="room" data-join="${esc(c.name)}">
+      <span class="room-ico">${icon('hash')}</span>
+      <span class="room-info"><b>${esc(c.name.slice(1))}</b><small>${c.n} ${c.n === 1 ? 'persona' : 'personas'} conectada${c.n === 1 ? '' : 's'}</small></span>
+      <span class="room-go">${joined(c.name.toLowerCase()) ? 'Abrir' : 'Entrar'}</span></button>`).join('');
+  return `<div class="browser" id="browser">
+    <h3>Canales activos</h3>
+    <p class="muted">Elige un canal para entrar o crea uno nuevo. Los canales existen mientras haya alguien dentro.</p>
+    <form class="room-new" id="room-new"><div class="field"><span>#</span><input id="room-name" maxlength="30" autocapitalize="none" spellcheck="false" placeholder="nombre-del-canal" required></div><button class="btn primary" type="submit">${icon('plus')} Crear o unirse</button></form>
+    <div class="rooms">${items || `<div class="rooms-empty">No hay canales activos ahora mismo.<br><button class="link" data-join="#general">Entra en #general</button> o crea el tuyo.</div>`}</div>
+  </div>`;
+}
+function renderBrowser() {
+  const el = document.getElementById('browser');
+  if (!el) return;
+  const typed = document.getElementById('room-name')?.value || '';
+  const focused = document.activeElement?.id === 'room-name';
+  el.outerHTML = browserHtml();
+  const inp = document.getElementById('room-name');
+  inp.value = typed;
+  if (focused) inp.focus();
+  bindBrowser();
+}
+function bindBrowser() {
+  const form = document.getElementById('room-new');
+  if (!form) return;
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const v = document.getElementById('room-name').value.trim().replace(/^#/, '');
+    if (v) joinChannel('#' + v);
+  };
+}
 
 function activate(key) {
   const w = state.windows.get(key);
@@ -525,17 +595,23 @@ function activate(key) {
   state.active = key;
   w.unread = 0; w.mention = false;
   const log = document.getElementById('log');
-  log.innerHTML = w.lines.join('') || (key === 'status' ? '' : '<div class="empty">Aún no hay mensajes. ¡Rompe el hielo!</div>');
-  log.scrollTop = log.scrollHeight;
+  if (key === 'status') {
+    log.innerHTML = browserHtml() + w.lines.join('');
+    log.scrollTop = 0;
+    bindBrowser();
+  } else {
+    log.innerHTML = w.lines.join('') || '<div class="empty">Aún no hay mensajes. ¡Rompe el hielo!</div>';
+    log.scrollTop = log.scrollHeight;
+  }
   document.getElementById('win-name').innerHTML = key === 'status' ? esc(w.name) : `${icon('hash', 'title-hash')}${esc(w.name.slice(1))}`;
   document.getElementById('input').placeholder = key === 'status' ? 'Escribe un /comando… (prueba /join #canal)' : `Mensaje en ${w.name}`;
-  if (key !== 'status') history.replaceState(null, '', '#' + w.name.slice(1));
+  history.replaceState(null, '', key === 'status' ? location.pathname : '#' + w.name.slice(1));
   renderTopic(); renderMembers(); renderChanList(); updateTitle();
   if (matchMedia('(pointer:fine)').matches) document.getElementById('input').focus();
 }
 function renderTopic() {
   const w = state.windows.get(state.active);
-  document.getElementById('topic').innerHTML = w.key === 'status' ? 'Mensajes del sistema y resultados de comandos' : (w.topic ? linkify(w.topic) : '<span class="muted">Sin tema · /topic para añadir uno</span>');
+  document.getElementById('topic').innerHTML = w.key === 'status' ? 'Elige un canal o crea uno nuevo' : (w.topic ? linkify(w.topic) : '<span class="muted">Sin tema · /topic para añadir uno</span>');
 }
 function renderMembers() {
   const w = state.windows.get(state.active);
@@ -629,7 +705,7 @@ async function partChannel(key) {
   state.windows.delete(key);
   statusLine(`Has salido de ${w.name}.`);
   trackLobby();
-  if (state.active === key) activate([...state.windows.keys()].pop());
+  if (state.active === key) activate('status');
   else renderChanList();
 }
 
@@ -717,6 +793,6 @@ async function handleInput(text) {
   }
 }
 document.addEventListener('click', (e) => {
-  const a = e.target.closest('a[data-join]');
+  const a = e.target.closest('#log [data-join]');
   if (a) { e.preventDefault(); joinChannel(a.dataset.join); }
 });

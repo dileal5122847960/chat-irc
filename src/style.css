@@ -241,3 +241,37 @@ code, kbd { font: .86em ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consol
   .part { display: block; }
 }
 @media (hover: none) { .gutter time { display: none; } .msg.first .gutter time { display: none; } }
+
+/* ===== Pantalla principal: Google, correo, separadores ===== */
+.btn.google { background: var(--panel); border: 1px solid var(--border); color: var(--text); font-weight: 600; }
+.btn.google:hover { background: var(--hover); }
+.btn.google .ico { width: 18px; height: 18px; }
+.divider { display: flex; align-items: center; gap: 12px; margin: 20px 0 14px; color: var(--faint); font-size: .78rem; font-weight: 600; }
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.alt-links { text-align: center; font-size: .88rem; color: var(--muted); margin: 14px 0 0; }
+.link { color: var(--accent-2); font-weight: 600; }
+.link:hover { text-decoration: underline; }
+.link.back { color: var(--muted); font-size: .88rem; margin-bottom: 10px; display: inline-block; }
+.view-title { font-size: 1.15rem; margin: 0 0 14px; letter-spacing: -.01em; }
+.lead { color: var(--muted); margin: 0 0 4px; font-size: .92rem; }
+.welcome-back .avatar .ico { width: 20px; height: 20px; }
+
+/* ===== Ventana "Canales" ===== */
+.browser { max-width: 720px; margin: 8px auto 20px; padding: 8px 20px; }
+.browser h3 { margin: 4px 0 2px; font-size: 1.25rem; letter-spacing: -.01em; }
+.browser > p { margin: 0 0 16px; font-size: .9rem; }
+.room-new { display: flex; gap: 8px; margin-bottom: 18px; }
+.room-new .field { flex: 1; }
+.room-new .field input { padding: 10px 8px; font-size: .98rem; }
+.room-new .btn { white-space: nowrap; }
+.rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.room { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); text-align: left; transition: border-color .15s, transform .1s, background .15s; }
+.room:hover { border-color: rgba(124, 108, 255, .55); background: var(--active); }
+.room:active { transform: translateY(1px); }
+.room-ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--active); color: var(--accent-2); flex: none; }
+.room-info { flex: 1; min-width: 0; }
+.room-info b, .room-info small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-info small { color: var(--muted); font-size: .8rem; }
+.room-go { font-size: .8rem; font-weight: 700; color: var(--accent-2); }
+.rooms-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 28px; border: 1px dashed var(--border); border-radius: 12px; line-height: 1.8; }
+@media (max-width: 700px) { .room-new { flex-direction: column; } .browser { padding: 4px 12px; } }
