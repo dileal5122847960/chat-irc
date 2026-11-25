@@ -1,6 +1,11 @@
 import './style.css';
 import { supabase, configured, configError } from './supabase.js';
 import { createDM } from './dm.js';
+import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, translatedFrom } from './i18n.js';
+import { translate } from './translate.js';
+
+setLang(initialLang());
+startI18n();
 
 /*
  * Arquitectura
@@ -74,6 +79,9 @@ const I = {
   play: '<path d="M7 4v16l13-8z" fill="currentColor"/>',
   pause: '<path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/>',
   check2: '<path d="m2.5 12.5 4 4 10-10M11.5 16.5l1 0L22 6.5"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  pdf: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h4"/>',
+  translate: '<path d="M4 5h9M8.5 3v2M6 5c0 4 3 7 6 8M11 5c0 3-3 7-7 9"/><path d="m13 20 4-9 4 9M14.5 17h5"/>',
 };
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 const verified = '<span class="verified" title="Usuario registrado">' + icon('check') + '</span>';
@@ -231,13 +239,22 @@ function renderHome(message = '', kind = 'error') {
         <button class="btn primary block" type="submit">${isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</button></form>
       <p class="alt-links">${isLogin ? '¿No tienes cuenta? <button type="button" class="link" data-view="register">Crear cuenta</button>' : '¿Ya tienes cuenta? <button type="button" class="link" data-view="login">Iniciar sesión</button>'}</p>`;
   }
+  const langPick = `<label class="lang-pick" title="Idioma">${icon('globe')}<select id="lang-select" aria-label="Idioma">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === getLang() ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
   root.innerHTML = `<div class="auth"><div class="auth-card">
+    ${langPick}
     <div class="brand"><span class="logo">#</span><div><h1>Chat IRC</h1><p class="muted">Canales, nicks y conversación en tiempo real</p></div></div>
     ${body}
+    <p class="muted small center lang-note">${icon('translate')} ${esc(t('Los mensajes de otros idiomas se traducirán al'))} <b class="ugc">${esc(LANGS[getLang()])}</b>.</p>
     <p class="muted small center note">Las conversaciones no se guardan: solo ves lo que se dice mientras estás conectado.</p>
   </div></div>`;
 
   root.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => { homeView = b.dataset.view; renderHome(); }));
+  document.getElementById('lang-select').onchange = (e) => {
+    const nick = document.getElementById('nick')?.value;
+    setLang(e.target.value);
+    renderHome();
+    if (nick !== undefined && document.getElementById('nick')) document.getElementById('nick').value = nick;
+  };
   document.getElementById('google-btn')?.addEventListener('click', signInWithGoogle);
   const logout = document.getElementById('logout-btn');
   if (logout) logout.onclick = async () => { await supabase.auth.signOut(); state.account = null; state.pendingUser = null; homeView = 'guest'; renderHome('Sesión cerrada.', 'ok'); };
@@ -640,8 +657,11 @@ function avatar(nick) {
 }
 
 /* ---------- Mensajes ---------- */
-const time = (d) => new Date(d).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+const time = (d) => new Date(d).toLocaleTimeString(getLang(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 function linkify(s) {
+  return '<span class="ugc">' + linkifyRaw(s) + '</span>';
+}
+function linkifyRaw(s) {
   return esc(s)
     .replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(/\*([^*\n]+)\*/g, '<b>$1</b>')
@@ -667,19 +687,58 @@ function crown(role) { return role ? `<i class="crown ${role}" title="${ROLE_TIT
 function avatarWithRole(nick, role, extra = '') { return `<span class="av-wrap ${role ? 'crowned' : ''}">${crown(role)}${avatar(nick)}${extra}</span>`; }
 /** Versión pequeña en línea (para acciones y menús). */
 function roleBadge(w, p) { const r = roleOf(w, p); return r ? `<span class="role-inline ${r}" title="${ROLE_TITLE[r]}">${CROWN_SVG}</span>` : ''; }
+/* ---------- Traducción de mensajes ---------- */
+const needsTranslation = (m) => !!m.lang && m.lang !== getLang() && m.from !== state.clientId && LANGS[m.lang] && typeof m.body === 'string' && m.body.trim().length > 0;
+function trInner(st, orig, src, translated) {
+  if (st === 'pending') return `${linkify(orig)} <small class="tr-note">${esc(t('Traduciendo…'))}</small>`;
+  if (st === 'done') return `<span class="tr-text">${linkify(translated)}</span><span class="tr-orig hidden">${linkify(orig)}</span> <button type="button" class="tr-toggle" data-src="${esc(src)}">${icon('translate')}${esc(translatedFrom(src))} · ${esc(t('Ver original'))}</button>`;
+  return linkify(orig);
+}
+const trWrap = (id, inner) => `<span class="tr-wrap" data-tr="${id}"><!--a-->${inner}<!--z--></span>`;
+/** Sustituye el cuerpo de un mensaje ya pintado (en pantalla y en la copia de la ventana). */
+function replaceTr(key, id, inner) {
+  const w = state.windows.get(key);
+  if (!w) return;
+  const startTag = `data-tr="${id}"><!--a-->`;
+  w.lines = w.lines.map((l) => {
+    const i = l.indexOf(startTag);
+    if (i < 0) return l;
+    const j = l.indexOf('<!--z-->', i);
+    return l.slice(0, i + startTag.length) + inner + l.slice(j);
+  });
+  const el = document.querySelector(`#log [data-tr="${CSS.escape(id)}"]`);
+  if (el) el.innerHTML = `<!--a-->${inner}<!--z-->`;
+}
+async function translateMessage(key, m) {
+  const r = await translate(m.body, m.lang, getLang());
+  replaceTr(key, m.trId, r ? trInner('done', m.body, m.lang, r.text) : trInner('fail', m.body));
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.tr-toggle');
+  if (!b) return;
+  const wrap = b.closest('.tr-wrap');
+  const showOrig = !wrap.querySelector('.tr-orig').classList.contains('hidden');
+  wrap.querySelector('.tr-orig').classList.toggle('hidden', showOrig);
+  wrap.querySelector('.tr-text').classList.toggle('hidden', !showOrig);
+  b.innerHTML = `${icon('translate')}${esc(translatedFrom(b.dataset.src))} · ${esc(t(showOrig ? 'Ver original' : 'Ver traducción'))}`;
+});
+
 function formatMessage(w, m) {
   const mention = mentionsMe(m);
+  const tr = needsTranslation(m);
+  if (tr) m.trId = 'tr' + Math.random().toString(36).slice(2, 10);
+  const bodyHtml = tr ? trWrap(m.trId, trInner('pending', m.body)) : linkify(m.body);
   const p = w.people.get(m.from);
   const role = roleOf(w, p);
   const nickHtml = `<b class="nick" style="${nickStyle(m.nick)}">${esc(m.nick)}</b>${m.reg ? verified : ''}`;
   if (m.kind === 'action') {
     w.last = null;
-    return `<div class="msg action ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body"><span class="star">*</span> ${nickHtml}${roleBadge(w, p)} ${linkify(m.body)}</div></div>`;
+    return `<div class="msg action ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body"><span class="star">*</span> ${nickHtml}${roleBadge(w, p)} ${bodyHtml}</div></div>`;
   }
   const grouped = w.last && w.last.from === m.from && w.last.nick === m.nick && m.ts - w.last.ts < 5 * 60 * 1000;
   w.last = { from: m.from, nick: m.nick, ts: m.ts };
-  if (grouped) return `<div class="msg cont ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body">${linkify(m.body)}</div></div>`;
-  return `<div class="msg first ${mention ? 'mention' : ''}"><span class="gutter">${avatarWithRole(m.nick, role)}</span><div class="msg-body"><div class="msg-head">${nickHtml}<time>${time(m.ts)}</time></div>${linkify(m.body)}</div></div>`;
+  if (grouped) return `<div class="msg cont ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body">${bodyHtml}</div></div>`;
+  return `<div class="msg first ${mention ? 'mention' : ''}"><span class="gutter">${avatarWithRole(m.nick, role)}</span><div class="msg-body"><div class="msg-head">${nickHtml}<time>${time(m.ts)}</time></div>${bodyHtml}</div></div>`;
 }
 function addHtml(key, html, { count = false, mention = false } = {}) {
   const w = state.windows.get(key);
@@ -703,6 +762,7 @@ function addMessage(key, m) {
   const w = state.windows.get(key);
   if (!w) return;
   addHtml(key, formatMessage(w, m), { count: m.from !== state.clientId, mention: mentionsMe(m) });
+  if (m.trId) translateMessage(key, m);
 }
 function sys(key, html, kind = 'info') {
   const w = state.windows.get(key);
@@ -720,7 +780,7 @@ document.addEventListener('visibilitychange', () => {
 function renderChanList() {
   const nav = document.getElementById('nav-browse');
   if (!nav) return;
-  nav.innerHTML = `<button class="chan ${state.active === 'status' ? 'active' : ''}">${icon('compass')}<span class="chan-name">Explorar canales</span></button>`;
+  nav.innerHTML = `<button class="chan ${state.active === 'status' ? 'active' : ''}">${icon('compass')}<span class="chan-name ui">Explorar canales</span></button>`;
   const joined = [...state.windows.values()].filter((w) => w.key !== 'status' && w.kind !== 'dm');
   const dms = [...state.windows.values()].filter((w) => w.kind === 'dm');
   document.getElementById('dm-label').classList.toggle('hidden', !dms.length);
@@ -834,7 +894,7 @@ function activate(key) {
     log.innerHTML = w.lines.join('') || '<div class="empty">Aún no hay mensajes. ¡Rompe el hielo!</div>';
     log.scrollTop = log.scrollHeight;
   }
-  document.getElementById('win-name').innerHTML = key === 'status' ? esc(w.name) : `${icon('hash', 'title-hash')}${esc(w.name.slice(1))}`;
+  document.getElementById('win-name').innerHTML = key === 'status' ? esc(w.name) : `${icon('hash', 'title-hash')}<span class="ugc">${esc(w.name.slice(1))}</span>`;
   document.getElementById('chan-menu').classList.toggle('hidden', key === 'status');
   state.setActionMode?.(false);
   document.getElementById('input-form').classList.toggle('hidden', key === 'status');
@@ -902,6 +962,7 @@ async function joinChannel(name) {
     if (typeof m.body !== 'string' || typeof m.nick !== 'string') return;
     m.body = m.body.slice(0, MAX_MSG);
     m.ts = Math.min(Number(m.ts) || Date.now(), Date.now());
+    if (!LANGS[m.lang]) delete m.lang;
     addMessage(key, m);
   });
   on('topic', (t) => applyTopic(w, t));
@@ -961,7 +1022,7 @@ function sendMessage(body, kind = 'msg') {
   if (w.kind === 'dm') return dm.sendText(w, body.slice(0, 4000), kind);
   if (Date.now() - lastSend < 250) return toast('Más despacio: espera un momento entre mensajes.');
   lastSend = Date.now();
-  const m = { from: state.clientId, nick: state.nick, reg: state.registered, kind, body: body.slice(0, MAX_MSG), ts: Date.now() };
+  const m = { id: crypto.randomUUID().slice(0, 12), from: state.clientId, nick: state.nick, reg: state.registered, kind, body: body.slice(0, MAX_MSG), ts: Date.now(), lang: getLang() };
   addMessage(w.key, m);
   w.rt.send({ type: 'broadcast', event: 'msg', payload: m }).then((r) => {
     if (r !== 'ok') sys(w.key, 'No se pudo enviar el último mensaje (conexión inestable).', 'err');
@@ -1104,6 +1165,7 @@ function channelMenu(anchor) {
       { label: 'Llamada de voz', icon: 'phone', disabled: !open || !!w.call, onClick: () => dm.startCall(w, false) },
       { label: 'Videollamada', icon: 'video', disabled: !open || !!w.call, onClick: () => dm.startCall(w, true) },
       { label: 'Enviar archivo', icon: 'clip', disabled: !open, onClick: () => document.getElementById('file-input').click() },
+      { label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) },
       { label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } },
       '-',
       { label: 'Cerrar conversación', icon: 'x', danger: true, onClick: () => dm.closeWindow(w) },
@@ -1113,6 +1175,7 @@ function channelMenu(anchor) {
   if (iAmPermAdmin(w)) items.push({ label: 'Editar tema', icon: 'edit', onClick: () => editTopic(w) });
   items.push({ label: 'Ver administradores', icon: 'shield', onClick: () => adminsDialog(w) });
   items.push({ label: 'Copiar enlace del canal', icon: 'link', onClick: () => navigator.clipboard?.writeText(location.origin + '/#' + w.name.slice(1)).then(() => toast('Enlace copiado')) });
+  items.push({ label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) });
   items.push({ label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } });
   items.push('-', { label: 'Salir del canal', icon: 'door', onClick: () => partChannel(w.key) });
   if (iAmOwner(w)) items.push({ label: 'Eliminar canal', icon: 'trash', danger: true, onClick: () => deleteChannel(w) });
@@ -1122,11 +1185,25 @@ function userMenu(anchor) {
   const items = [
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
     { label: document.documentElement.dataset.theme === 'dark' ? 'Tema claro' : 'Tema oscuro', icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', onClick: toggleTheme },
+    { label: 'Idioma', hint: LANGS[getLang()], icon: 'globe', onClick: () => languageMenu(anchor) },
   ];
   if (state.registered && !myOwnChannel()) items.push({ label: 'Crear mi canal', icon: 'plus', onClick: () => { activate('status'); createChannelDialog(); } });
   items.push('-', { label: 'Salir del chat', icon: 'logout', onClick: quitChat });
   if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
   openMenu(anchor, items, { title: `${avatar(state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
+}
+
+function languageMenu(anchor) {
+  openMenu(anchor, Object.entries(LANGS).map(([k, v]) => ({
+    label: (k === getLang() ? '✓ ' : '') + v, onClick: () => {
+      setLang(k);
+      // Se vuelve a pintar la interfaz en el nuevo idioma
+      const active = state.active;
+      renderChanList(); updateMe(); updateThemeBtn();
+      activate(active);
+      retranslate();
+    },
+  })), { title: `${icon('globe')}<span><b class="ugc">${esc(t('Idioma'))}</b></span>` });
 }
 
 async function changeNickDialog() {
@@ -1152,7 +1229,7 @@ async function changeNickDialog() {
   for (const w of state.windows.values()) {
     if (!w.rt || w.kind === 'dm') continue;
     w.rt.track(myPresence(w));
-    w.rt.send({ type: 'broadcast', event: 'msg', payload: { from: state.clientId, nick, reg: state.registered, kind: 'action', body: `ahora se llama ${nick} (antes ${old})`, ts: Date.now() } });
+    w.rt.send({ type: 'broadcast', event: 'msg', payload: { from: state.clientId, nick, reg: state.registered, kind: 'action', body: `ahora se llama ${nick} (antes ${old})`, ts: Date.now(), lang: 'es' } });
     sys(w.key, `Ahora eres <b>${esc(nick)}</b>`, 'info');
   }
 }
@@ -1201,4 +1278,55 @@ function openPrivate(cid) {
   if (!p || p.me) return;
   document.getElementById('app').classList.remove('members-open');
   dm.requestPrivate({ cid: p.cid, nick: p.nick, reg: p.reg });
+}
+
+/* ---------- Exportar la conversación abierta a PDF ---------- */
+// Se genera en el navegador a partir de lo que hay en pantalla (traducciones incluidas)
+// y se usa "Guardar como PDF" del diálogo de impresión: respeta acentos, emojis y fotos.
+async function exportPdf(w) {
+  if (state.active !== w.key) activate(w.key);
+  const log = document.getElementById('log');
+  if (!w.lines.length || !log) return toast(t('No hay nada que exportar.'));
+  toast(t('Preparando el PDF… elige "Guardar como PDF" en la ventana de impresión.'));
+  const isDm = w.kind === 'dm';
+  const now = new Date();
+  const when = now.toLocaleString(getLang(), { dateStyle: 'long', timeStyle: 'short' });
+  const people = isDm ? [state.nick, w.peer.nick] : [...w.people.values()].map((p) => p.nick);
+  const title = isDm ? `${t('Conversación privada con')} ${w.peer.nick}` : w.name;
+  const css = [...document.styleSheets].map((ss) => { try { return [...ss.cssRules].map((r) => r.cssText).join('\n'); } catch { return ''; } }).join('\n');
+  const fileName = `chat-irc_${(isDm ? w.peer.nick : w.name.slice(1)).replace(/[^\w-]/g, '')}_${now.toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+  const html = `<!doctype html><html lang="${getLang()}" data-theme="light"><head><meta charset="utf-8"><title>${esc(fileName)}</title>
+    <style>${css}
+      html, body { overflow: visible !important; height: auto !important; background: #fff !important; }
+      .app { display: block !important; height: auto !important; box-shadow: none !important; }
+      .log { overflow: visible !important; height: auto !important; padding: 0 !important; }
+      .pdf-head { border-bottom: 2px solid #6355f0; padding: 0 0 12px; margin: 0 0 14px; font-family: system-ui, sans-serif; }
+      .pdf-head h1 { margin: 0 0 4px; font-size: 20px; color: #171a21; }
+      .pdf-head p { margin: 2px 0; color: #5f6678; font-size: 12px; }
+      .pdf-foot { margin-top: 18px; padding-top: 8px; border-top: 1px solid #ddd; color: #5f6678; font-size: 11px; font-family: system-ui, sans-serif; }
+      .tr-toggle, .voice-play, .voice-speed, .browser, .tr-note { display: none !important; }
+      .tr-orig.hidden { display: block !important; color: #5f6678; font-size: .85em; font-style: italic; }
+      .tr-orig.hidden::before { content: '↳ '; }
+      .tr-text.hidden { display: inline !important; }
+      .gutter time { opacity: 1 !important; }
+      .msg, .sys, .bub-row { break-inside: avoid; }
+      video { display: none !important; }
+      .bmedia img, .att-media img { max-height: 320px; }
+      @page { margin: 14mm; }
+    </style></head>
+    <body><header class="pdf-head"><h1>${esc(title)}</h1>
+      <p>${esc(t('Exportado el'))} ${esc(when)} · Chat IRC</p>
+      <p>${esc(t('Participantes'))}: ${people.map(esc).join(', ')}</p></header>
+      <div class="app ${isDm ? 'in-dm' : ''}"><div class="log">${log.innerHTML}</div></div>
+      <p class="pdf-foot">${esc(t('Las conversaciones no se guardan en ningún servidor: este documento es la única copia.'))}</p></body></html>`;
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  doc.open(); doc.write(html); doc.close();
+  await Promise.all([...doc.images].map((img) => (img.complete ? null : new Promise((r) => { img.onload = img.onerror = r; }))));
+  await new Promise((r) => setTimeout(r, 250));
+  frame.contentWindow.focus();
+  frame.contentWindow.print();
+  setTimeout(() => frame.remove(), 60000);
 }

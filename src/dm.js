@@ -11,6 +11,8 @@
  */
 
 import { EMOJI, STICKERS, stickerSvg } from './emoji.js';
+import { t, LANGS, getLang, translatedFrom } from './i18n.js';
+import { translate } from './translate.js';
 
 const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo
 const CHUNK = 32 * 1024;
@@ -281,8 +283,13 @@ export function createDM(ctx) {
   function onData(w, m) {
     switch (m.t) {
       case 'text': {
-        const msg = { mid: safeId(m.mid), mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now() };
+        const msg = { mid: safeId(m.mid), mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now(), lang: LANGS[m.lang] ? m.lang : null };
+        if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'pending';
         addMessage(w, msg); receipt(w, msg.mid);
+        if (msg.tr) translate(msg.text, msg.lang, getLang()).then((r) => {
+          msg.tr = r ? 'done' : 'fail'; msg.trText = r?.text;
+          rerender(w, msg.mid);
+        });
         return;
       }
       case 'sticker': {
@@ -376,9 +383,9 @@ export function createDM(ctx) {
     if (m.kind === 'text') {
       const onlyEmoji = /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,12}$/u.test(m.text) && !/^[\d#*\s]+$/.test(m.text) && [...new Intl.Segmenter().segment(m.text.trim())].length <= 3;
       if (onlyEmoji) { cls = 'emoji-only'; body = `<div class="big-emoji">${esc(m.text)}</div>`; }
-      else body = `<div class="btext">${linkify(m.text)}<span class="meta-spacer"></span></div>`;
+      else body = `<div class="btext">${trBody(m)}<span class="meta-spacer"></span></div>`;
     } else if (m.kind === 'action') {
-      body = `<div class="btext"><i>* ${esc(m.mine ? state.nick : w.peer.nick)} ${linkify(m.text)}</i><span class="meta-spacer"></span></div>`;
+      body = `<div class="btext"><i>* <span class="ugc">${esc(m.mine ? state.nick : w.peer.nick)}</span> ${trBody(m)}</i><span class="meta-spacer"></span></div>`;
     } else if (m.kind === 'sticker') {
       cls = 'sticker-msg'; body = `<div class="sticker">${stickerSvg(m.sticker)}</div>`;
     } else {
@@ -388,6 +395,12 @@ export function createDM(ctx) {
       body = fileHtml(w, m, f);
     }
     return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls}" id="m-${m.mid}"><div class="bubble">${body}${meta}</div></div>`;
+  }
+  /** Cuerpo de texto, traducido si llegó en otro idioma (con opción de ver el original). */
+  function trBody(m) {
+    if (m.tr === 'pending') return `<span class="tr-wrap">${linkify(m.text)} <small class="tr-note">${esc(t('Traduciendo…'))}</small></span>`;
+    if (m.tr === 'done') return `<span class="tr-wrap"><span class="tr-text">${linkify(m.trText)}</span><span class="tr-orig hidden">${linkify(m.text)}</span> <button type="button" class="tr-toggle" data-src="${esc(m.lang)}">${icon('translate')}${esc(translatedFrom(m.lang))} · ${esc(t('Ver original'))}</button></span>`;
+    return linkify(m.text);
   }
   /** Vuelve a pintar un mensaje (al terminar una transferencia o cambiar la marca de lectura). */
   function rerender(w, mid) {
@@ -489,7 +502,7 @@ export function createDM(ctx) {
   function sendText(w, text, kind = 'msg') {
     if (w.status !== 'open') return;
     const mid = crypto.randomUUID();
-    sendJSON(w, { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text' });
+    sendJSON(w, { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: getLang() });
     addMessage(w, { mid, mine: true, kind: kind === 'action' ? 'action' : 'text', text, ts: Date.now() });
   }
   function sendSticker(w, id) {
