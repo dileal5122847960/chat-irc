@@ -5,10 +5,11 @@ import { supabase, configured, configError } from './supabase.js';
  * Arquitectura
  * ─────────────
  * • Mensajes: Supabase Realtime "Broadcast" (navegador → navegador). No se guardan.
- * • Canales y usuarios conectados: Realtime "Presence". Un canal existe mientras haya gente.
- * • "irc-lobby": canal de presencia global para saber qué nicks están en uso y qué canales hay.
- * • Base de datos: solo cuentas registradas (tabla profiles = nick reservado).
- *   Los invitados no generan ninguna escritura.
+ * • Usuarios conectados: Realtime "Presence" (por canal y en el lobby global "irc-lobby").
+ * • Base de datos (mínima): cuentas registradas (profiles), canales (channels: uno por
+ *   usuario registrado) y administradores permanentes (channel_admins).
+ *   La lista de canales se lee al entrar y solo se recarga cuando alguien crea o borra uno.
+ * • Los invitados no escriben nunca en la base de datos; pueden ser admins temporales.
  */
 
 const root = document.getElementById('root');
@@ -24,6 +25,7 @@ const state = {
   nick: null,
   registered: false,
   windows: new Map(), // clave -> ventana ('status' o '#canal' en minúsculas)
+  channels: new Map(), // canales guardados en la BD (clave: nombre en minúsculas)
   active: 'status',
   lobby: null,
   lobbyReady: null,
@@ -42,6 +44,20 @@ const I = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7"/>',
+  dots: '<circle cx="12" cy="5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="19" r="1.3"/>',
+  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5"/>',
+  compass: '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/>',
+  crown: '<path d="M3 8l4 4 5-7 5 7 4-4-2 11H5z"/>',
+  shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>',
+  'shield-off': '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6zM4 4l16 16"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>',
+  at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+  door: '<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  eraser: '<path d="m7 21-4-4L14 6l6 6-9 9zM9 21h12M10 10l6 6"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
 };
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 const verified = '<span class="verified" title="Usuario registrado">' + icon('check') + '</span>';
@@ -87,14 +103,16 @@ async function loadAccount(user) {
 
 /* ---------- Lobby global (presencia) ---------- */
 function connectLobby() {
-  const lobby = supabase.channel('irc-lobby', { config: { presence: { key: state.clientId } } });
+  const lobby = supabase.channel('irc-lobby', { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
+  lobby.on('broadcast', { event: 'channels' }, () => {
+    if (state.nick) loadChannels().then(() => { renderBrowser(); renderChanList(); });
+  });
   state.lobby = lobby;
   state.lobbyReady = new Promise((resolve) => {
     lobby
       .on('presence', { event: 'sync' }, () => {
         resolve();
-        renderActiveChannels();
-        if (state.windows.has('status')) refreshListIfOpen();
+        if (state.nick) renderBrowser();
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') setTimeout(resolve, 1500); // sin nadie conectado puede no llegar "sync"
@@ -212,10 +230,6 @@ function renderHome(message = '', kind = 'error') {
   if (matchMedia('(pointer:fine)').matches) first?.focus();
   form.onsubmit = (e) => { e.preventDefault(); submitHome(form); };
 }
-function renderActiveChannels() {
-  // La lista de canales se muestra dentro del chat (ventana "Canales").
-  if (state.active === 'status' && document.getElementById('browser')) renderBrowser();
-}
 function setHomeError(form, text, kind = 'error') {
   const p = form.querySelector('[role=alert]');
   p.className = kind; p.innerHTML = text;
@@ -297,24 +311,127 @@ async function submitHome(form) {
 /* ===================================================================== */
 /* Chat                                                                  */
 /* ===================================================================== */
-const COMMANDS = [
-  ['/join', '#canal', 'Entra en un canal (se crea al entrar)'],
-  ['/part', '', 'Sale del canal actual'],
-  ['/me', 'acción', 'Describe una acción: * nick saluda'],
-  ['/nick', 'nuevo', 'Cambia tu nick'],
-  ['/topic', 'texto', 'Cambia el tema del canal'],
-  ['/list', '', 'Canales activos ahora'],
-  ['/clear', '', 'Limpia la ventana'],
-  ['/help', '', 'Muestra la ayuda'],
-  ['/quit', '', 'Sale del chat'],
-];
 
+/* ---------- Diálogos y menús (sin prompt/alert del navegador) ---------- */
+function closeOverlays() {
+  document.querySelectorAll('.menu-pop, .dialog-wrap').forEach((e) => e.remove());
+}
+/**
+ * Abre un menú contextual junto a un elemento.
+ * items: [{ label, icon, danger, disabled, hint, onClick }] o '-' para separador.
+ */
+function openMenu(anchor, items, { title } = {}) {
+  closeOverlays();
+  const m = document.createElement('div');
+  m.className = 'menu-pop';
+  m.setAttribute('role', 'menu');
+  m.innerHTML = (title ? `<div class="menu-title">${title}</div>` : '') + items.map((it, i) => it === '-'
+    ? '<hr>'
+    : `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}" ${it.disabled ? 'disabled' : ''}>${it.icon ? icon(it.icon) : ''}<span>${esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</span></button>`).join('');
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  let left = Math.min(r.left, innerWidth - mw - 8);
+  let top = r.bottom + 6;
+  if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+  m.style.left = Math.max(8, left) + 'px';
+  m.style.top = top + 'px';
+  m.onclick = (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b || b.disabled) return;
+    m.remove();
+    items[b.dataset.i].onClick?.();
+  };
+  setTimeout(() => document.addEventListener('pointerdown', function away(e) {
+    if (!m.contains(e.target)) { m.remove(); document.removeEventListener('pointerdown', away); }
+  }), 0);
+  m.querySelector('button:not([disabled])')?.focus();
+}
+/**
+ * Abre un cuadro de diálogo. fields: [{ name, label, value, prefix, max, placeholder, multiline }]
+ * Devuelve una promesa con los valores, o null si se cancela. `validate` puede devolver un error (texto).
+ */
+function openDialog({ title, text = '', fields = [], confirm = 'Aceptar', danger = false, validate }) {
+  closeOverlays();
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'dialog-wrap';
+    wrap.innerHTML = `<form class="dialog" role="dialog" aria-modal="true">
+      <h3>${esc(title)}</h3>${text ? `<p class="muted">${text}</p>` : ''}
+      ${fields.map((f) => `<label>${esc(f.label)}</label><div class="field">${f.prefix ? `<span>${esc(f.prefix)}</span>` : ''}${f.multiline
+        ? `<textarea name="${f.name}" maxlength="${f.max || 300}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>`
+        : `<input name="${f.name}" value="${esc(f.value || '')}" maxlength="${f.max || 100}" placeholder="${esc(f.placeholder || '')}" autocomplete="off" autocapitalize="none" spellcheck="false">`}</div>`).join('')}
+      <p class="error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="btn" data-cancel>Cancelar</button><button type="submit" class="btn ${danger ? 'danger' : 'primary'}">${esc(confirm)}</button></div>
+    </form>`;
+    document.body.appendChild(wrap);
+    const form = wrap.querySelector('form');
+    const close = (v) => { wrap.remove(); resolve(v); };
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(null); });
+    wrap.querySelector('[data-cancel]').onclick = () => close(null);
+    form.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const values = Object.fromEntries(fields.map((f) => [f.name, form.elements[f.name].value.trim()]));
+      const btn = form.querySelector('[type=submit]');
+      btn.disabled = true;
+      const err = validate ? await validate(values) : '';
+      btn.disabled = false;
+      if (err) { form.querySelector('[role=alert]').textContent = err; return; }
+      close(values);
+    };
+    (form.querySelector('input,textarea') || form.querySelector('[type=submit]')).focus();
+  });
+}
+let toastTimer;
+function toast(text) {
+  let t = document.getElementById('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelector('.menu-pop')?.remove(); });
+
+/* ---------- Canales guardados en la base de datos ---------- */
+/** Lee la lista de canales (una consulta). Se repite solo cuando alguien crea o borra un canal. */
+async function loadChannels() {
+  const { data, error } = await supabase.from('channels').select('id, name, topic, owner_id, channel_admins(user_id)').order('name');
+  if (error) { toast('No se pudo cargar la lista de canales: ' + error.message); return; }
+  const map = new Map();
+  for (const c of data) map.set(c.name.toLowerCase(), { id: c.id, name: c.name, topic: c.topic, owner_id: c.owner_id, admins: new Set(c.channel_admins.map((a) => a.user_id)) });
+  // Conserva el objeto de los canales abiertos para no perder el estado en pantalla
+  for (const [k, w] of state.windows) {
+    if (k === 'status') continue;
+    const fresh = map.get(k);
+    if (fresh) { Object.assign(w.ch, { topic: fresh.topic, owner_id: fresh.owner_id, admins: fresh.admins }); map.set(k, w.ch); }
+  }
+  state.channels = map;
+}
+const announceChannelsChanged = () => state.lobby.send({ type: 'broadcast', event: 'channels', payload: {} });
+const myOwnChannel = () => state.account && [...state.channels.values()].find((c) => c.owner_id === state.account.id);
+function onlineCount(name) { return activeChannels().find((c) => c.name.toLowerCase() === name.toLowerCase())?.n || 0; }
+
+/* ---------- Administradores ---------- */
+const isPermAdmin = (ch, uid) => !!uid && (ch.owner_id === uid || ch.admins.has(uid));
+const isOwner = (ch, uid) => !!uid && ch.owner_id === uid;
+const personIsAdmin = (w, p) => isPermAdmin(w.ch, p.uid) || !!p.tmp;
+const iAmPermAdmin = (w) => isPermAdmin(w.ch, state.account?.id);
+const iAmAdmin = (w) => iAmPermAdmin(w) || w.myTmp;
+const iAmOwner = (w) => isOwner(w.ch, state.account?.id);
+/** ¿El cliente cid es administrador según lo que vemos? (para validar órdenes recibidas) */
+function cidIsAdmin(w, cid) { const p = w.people.get(cid); return !!p && personIsAdmin(w, p); }
+
+/* ===================================================================== */
 function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
   renderClient();
-  if (channel) joinChannel(channel);
-  else activate('status');
+  loadChannels().then(() => {
+    renderBrowser(); renderChanList();
+    if (channel) joinChannel(channel);
+  });
 }
 
 function renderClient() {
@@ -323,14 +440,15 @@ function renderClient() {
       <header class="side-head"><span class="logo sm">#</span><b>Chat IRC</b>
         <button class="icon-btn mobile-only" id="close-side" title="Cerrar">${icon('x')}</button></header>
       <div class="side-section">
-        <div class="side-label">Tus canales <button class="icon-btn sm" id="add-chan" title="Unirse o crear canal">${icon('plus')}</button></div>
+        <nav id="nav-browse"></nav>
+        <div class="side-label spaced">Tus canales</div>
         <nav id="chan-list"></nav>
-        <div class="side-label spaced">Activos ahora</div>
-        <nav id="live-list"></nav>
       </div>
       <footer class="me">
-        <span id="me-avatar"></span>
-        <div class="me-info"><b id="me-nick"></b><small><i class="dot on"></i> ${state.registered ? 'Registrado' : 'Invitado'}</small></div>
+        <button class="me-btn" id="me-btn" title="Opciones de usuario">
+          <span id="me-avatar"></span>
+          <span class="me-info"><b id="me-nick"></b><small><i class="dot on"></i> ${state.registered ? 'Registrado' : 'Invitado'}</small></span>
+        </button>
         <button class="icon-btn" id="theme-btn" title="Cambiar tema"></button>
         <button class="icon-btn" id="quit-btn" title="Salir del chat">${icon('logout')}</button>
       </footer>
@@ -341,38 +459,35 @@ function renderClient() {
         <button class="icon-btn mobile-only" id="open-side" title="Canales">${icon('menu')}</button>
         <div class="chat-title"><h2 id="win-name"></h2><p id="topic"></p></div>
         <button class="icon-btn" id="toggle-members" title="Usuarios">${icon('users')}<span id="member-count"></span></button>
+        <button class="icon-btn" id="chan-menu" title="Opciones del canal">${icon('dots')}</button>
       </header>
       <div class="chat-body">
         <div class="log" id="log"></div>
         <aside class="members" id="members"></aside>
       </div>
       <form class="composer" id="input-form">
-        <div class="cmd-pop hidden" id="cmd-pop"></div>
         <div class="input-wrap">
+          <button type="button" class="icon-btn action-toggle" id="action-btn" title="Escribir como acción (* tu_nick hace algo)">${icon('sparkle')}</button>
           <input id="input" autocomplete="off" spellcheck="true" maxlength="${MAX_MSG}" placeholder="Escribe un mensaje…">
           <button class="send" type="submit" title="Enviar">${icon('send')}</button>
         </div>
-        <p class="composer-hint">Enter para enviar · <kbd>/</kbd> comandos · <kbd>Tab</kbd> completa nicks · <kbd>↑</kbd> recupera lo escrito</p>
       </form>
     </main>
   </div>`;
   state.windows.clear();
-  state.windows.set('status', { key: 'status', name: 'Canales', lines: [], unread: 0, mention: false, last: null });
+  state.windows.set('status', { key: 'status', name: 'Explorar canales', lines: [], unread: 0, mention: false, last: null });
   updateMe();
   updateThemeBtn();
   bindComposer();
 
   const app = document.getElementById('app');
   const closeSide = () => app.classList.remove('side-open');
+  document.getElementById('nav-browse').onclick = () => { activate('status'); closeSide(); };
   document.getElementById('chan-list').onclick = (e) => {
     const b = e.target.closest('[data-win]');
     if (!b) return;
     if (e.target.closest('[data-part]')) return partChannel(b.dataset.win);
     activate(b.dataset.win); closeSide();
-  };
-  document.getElementById('live-list').onclick = (e) => {
-    const b = e.target.closest('[data-join]');
-    if (b) { joinChannel(b.dataset.join); closeSide(); }
   };
   document.getElementById('open-side').onclick = () => app.classList.add('side-open');
   document.getElementById('close-side').onclick = closeSide;
@@ -381,69 +496,47 @@ function renderClient() {
     if (matchMedia('(max-width: 900px)').matches) app.classList.toggle('members-open');
     else app.classList.toggle('members-hidden');
   };
-  document.getElementById('add-chan').onclick = () => {
-    const name = prompt('Canal al que unirte (se crea si no existe):', '#');
-    if (name && name.trim() && name.trim() !== '#') { joinChannel(name.trim().startsWith('#') ? name.trim() : '#' + name.trim()); closeSide(); }
-  };
-  document.getElementById('quit-btn').onclick = () => handleInput('/quit');
-  document.getElementById('theme-btn').onclick = () => { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); updateThemeBtn(); };
+  document.getElementById('quit-btn').onclick = quitChat;
+  document.getElementById('theme-btn').onclick = toggleTheme;
+  document.getElementById('me-btn').onclick = (e) => userMenu(e.currentTarget);
+  document.getElementById('chan-menu').onclick = (e) => channelMenu(e.currentTarget);
   document.getElementById('members').onclick = (e) => {
-    const li = e.target.closest('[data-nick]');
-    const input = document.getElementById('input');
-    if (li) { input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + li.dataset.nick + (input.value ? ' ' : ': '); input.focus(); app.classList.remove('members-open'); }
+    const li = e.target.closest('[data-cid]');
+    if (li) memberMenu(li, li.dataset.cid);
   };
-
-  statusLine(`Conectado como ${state.nick}${state.registered ? ' (registrado)' : ' (invitado)'}. Escribe /help para ver los comandos.`);
-  statusLine('Las conversaciones no se guardan: solo verás los mensajes enviados mientras estés en el canal.');
+  sys('status', `Conectado como <b>${esc(state.nick)}</b>${state.registered ? ' (registrado)' : ' (invitado)'}. Las conversaciones no se guardan.`, 'info');
   renderChanList();
   trackLobby();
 }
 
 function bindComposer() {
   const input = document.getElementById('input');
-  const pop = document.getElementById('cmd-pop');
+  const actionBtn = document.getElementById('action-btn');
+  let actionMode = false;
+  const setAction = (on) => {
+    actionMode = on;
+    actionBtn.classList.toggle('on', on);
+    const w = state.windows.get(state.active);
+    input.placeholder = on ? `Describe una acción: * ${state.nick} …` : w && w.key !== 'status' ? `Mensaje en ${w.name}` : 'Elige un canal para hablar';
+  };
+  actionBtn.onclick = () => { setAction(!actionMode); input.focus(); };
   document.getElementById('input-form').onsubmit = (e) => {
     e.preventDefault();
-    const text = input.value;
+    const text = input.value.trim();
+    if (!text) return;
     input.value = '';
-    hidePop();
-    if (text.trim()) handleInput(text);
+    sendMessage(text, actionMode ? 'action' : 'msg');
+    if (actionMode) setAction(false);
   };
-  const hist = []; let hi = -1; let popIndex = 0;
-  function hidePop() { pop.classList.add('hidden'); popIndex = 0; }
-  input.addEventListener('input', () => {
-    const v = input.value;
-    if (v.startsWith('/') && !v.includes(' ')) {
-      const items = COMMANDS.filter(([c]) => c.startsWith(v.toLowerCase()));
-      if (!items.length) return hidePop();
-      popIndex = Math.min(popIndex, items.length - 1);
-      pop.innerHTML = items.map(([c, a, d], i) => `<button type="button" data-cmd="${c}" class="${i === popIndex ? 'sel' : ''}"><b>${c}</b> <span class="arg">${esc(a)}</span><small>${esc(d)}</small></button>`).join('');
-      pop.classList.remove('hidden');
-    } else hidePop();
-  });
-  pop.onmousedown = (e) => {
-    e.preventDefault();
-    const b = e.target.closest('[data-cmd]');
-    if (b) { input.value = b.dataset.cmd + ' '; hidePop(); input.focus(); }
-  };
+  const hist = []; let hi = -1;
   input.addEventListener('keydown', (e) => {
-    const popOpen = !pop.classList.contains('hidden');
-    if (popOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-      const n = pop.children.length;
-      popIndex = (popIndex + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
-      [...pop.children].forEach((c, i) => c.classList.toggle('sel', i === popIndex));
-      e.preventDefault(); return;
-    }
-    if (popOpen && (e.key === 'Tab' || (e.key === 'Enter' && pop.children[popIndex] && input.value !== pop.children[popIndex].dataset.cmd))) {
-      input.value = pop.children[popIndex].dataset.cmd + ' ';
-      hidePop(); e.preventDefault(); return;
-    }
-    if (e.key === 'Escape') return hidePop();
     if (e.key === 'Enter' && input.value.trim()) { hist.unshift(input.value); hi = -1; }
     if (e.key === 'ArrowUp' && hist.length) { hi = Math.min(hi + 1, hist.length - 1); input.value = hist[hi]; e.preventDefault(); }
     if (e.key === 'ArrowDown' && hi >= 0) { hi -= 1; input.value = hi < 0 ? '' : hist[hi]; e.preventDefault(); }
-    if (e.key === 'Tab' && !popOpen) { e.preventDefault(); completeNick(input); }
+    if (e.key === 'Tab') { e.preventDefault(); completeNick(input); }
+    if (e.key === 'Escape' && actionMode) setAction(false);
   });
+  state.setActionMode = setAction;
 }
 
 function updateMe() {
@@ -451,6 +544,7 @@ function updateMe() {
   document.getElementById('me-avatar').innerHTML = avatar(state.nick);
   updateTitle();
 }
+function toggleTheme() { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); updateThemeBtn(); }
 function updateThemeBtn() {
   const b = document.getElementById('theme-btn');
   if (b) b.innerHTML = icon(document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon');
@@ -481,9 +575,16 @@ function mentionsMe(m) {
   if (m.from === state.clientId) return false;
   return new RegExp(`(^|[^\\w])${state.nick.replace(/[^\w]/g, '\\$&')}([^\\w]|$)`, 'i').test(m.body);
 }
+function roleBadge(w, p) {
+  if (!p) return '';
+  if (isOwner(w.ch, p.uid)) return '<span class="role owner" title="Creador del canal">' + icon('crown') + '</span>';
+  if (personIsAdmin(w, p)) return `<span class="role admin" title="Administrador${p.tmp && !isPermAdmin(w.ch, p.uid) ? ' temporal' : ''}">${icon('shield')}</span>`;
+  return '';
+}
 function formatMessage(w, m) {
   const mention = mentionsMe(m);
-  const nickHtml = `<b class="nick" style="${nickStyle(m.nick)}">${esc(m.nick)}</b>${m.reg ? verified : ''}`;
+  const p = w.people.get(m.from);
+  const nickHtml = `<b class="nick" style="${nickStyle(m.nick)}">${esc(m.nick)}</b>${m.reg ? verified : ''}${roleBadge(w, p)}`;
   if (m.kind === 'action') {
     w.last = null;
     return `<div class="msg action ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body"><span class="star">*</span> ${nickHtml} ${linkify(m.body)}</div></div>`;
@@ -503,7 +604,7 @@ function addHtml(key, html, { count = false, mention = false } = {}) {
     log.querySelector('.empty')?.remove();
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
     log.insertAdjacentHTML('beforeend', html);
-    if (log.children.length > 500) log.firstElementChild.remove();
+    if (key !== 'status' && log.children.length > 500) log.firstElementChild.remove();
     if (atBottom) log.scrollTop = log.scrollHeight;
   }
   if (count && (state.active !== key || document.hidden)) {
@@ -514,8 +615,7 @@ function addHtml(key, html, { count = false, mention = false } = {}) {
 function addMessage(key, m) {
   const w = state.windows.get(key);
   if (!w) return;
-  const mine = m.from === state.clientId;
-  addHtml(key, formatMessage(w, m), { count: !mine, mention: mentionsMe(m) });
+  addHtml(key, formatMessage(w, m), { count: m.from !== state.clientId, mention: mentionsMe(m) });
 }
 function sys(key, html, kind = 'info') {
   const w = state.windows.get(key);
@@ -523,95 +623,131 @@ function sys(key, html, kind = 'info') {
   w.last = null;
   addHtml(key, `<div class="sys ${kind}"><span class="gutter"><time>${time(Date.now())}</time></span><div class="msg-body">${html}</div></div>`);
 }
-const statusLine = (text) => sys('status', esc(text));
-const errorLine = (text) => sys(state.active, esc(text), 'err');
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   const w = state.windows.get(state.active);
   if (w && w.unread) { w.unread = 0; w.mention = false; renderChanList(); updateTitle(); }
 });
 
-/* ---------- Ventanas / canales ---------- */
+/* ---------- Barra lateral ---------- */
 function renderChanList() {
-  const el = document.getElementById('chan-list');
-  if (!el) return;
-  el.innerHTML = [...state.windows.values()].map((w) => {
-    const isStatus = w.key === 'status';
+  const nav = document.getElementById('nav-browse');
+  if (!nav) return;
+  nav.innerHTML = `<button class="chan ${state.active === 'status' ? 'active' : ''}">${icon('compass')}<span class="chan-name">Explorar canales</span></button>`;
+  const joined = [...state.windows.values()].filter((w) => w.key !== 'status');
+  document.getElementById('chan-list').innerHTML = joined.map((w) => {
     const badge = w.unread ? `<span class="badge ${w.mention ? 'mention' : ''}">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
     return `<button data-win="${esc(w.key)}" class="chan ${w.key === state.active ? 'active' : ''} ${w.unread ? 'unread' : ''}">
-      ${icon(isStatus ? 'home' : 'hash')}<span class="chan-name">${esc(isStatus ? w.name : w.name.slice(1))}</span>${badge}
-      ${!isStatus ? `<span class="part" data-part title="Salir del canal">${icon('x')}</span>` : ''}</button>`;
-  }).join('');
-  renderLiveList();
+      ${icon('hash')}<span class="chan-name">${esc(w.name.slice(1))}</span>${iAmOwner(w) ? `<span class="role owner" title="Tu canal">${icon('crown')}</span>` : ''}${badge}
+      <span class="part" data-part title="Salir del canal">${icon('x')}</span></button>`;
+  }).join('') || '<p class="side-empty">Aún no estás en ningún canal.</p>';
 }
-function renderLiveList() {
-  const el = document.getElementById('live-list');
-  if (!el) return;
-  const list = activeChannels().filter((c) => !state.windows.has(c.name.toLowerCase()));
-  el.innerHTML = list.slice(0, 15).map((c) => `<button class="chan" data-join="${esc(c.name)}">${icon('hash')}<span class="chan-name">${esc(c.name.slice(1))}</span><span class="count">${c.n}</span></button>`).join('')
-    || '<p class="side-empty">No hay otros canales activos.</p>';
-}
-function refreshListIfOpen() { renderLiveList(); renderActiveChannels(); }
 
-/** Lista de canales activos + crear/unirse (ventana "Canales"). */
+/* ---------- Explorar canales ---------- */
+let browserFilter = '';
 function browserHtml() {
-  const list = activeChannels();
-  const joined = (k) => state.windows.has(k);
+  const own = myOwnChannel();
+  const q = browserFilter.toLowerCase();
+  const list = [...state.channels.values()]
+    .map((c) => ({ ...c, n: onlineCount(c.name) }))
+    .filter((c) => !q || c.name.toLowerCase().includes(q) || c.topic.toLowerCase().includes(q))
+    .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  let createBox;
+  if (!state.registered) createBox = `<div class="create-box muted">${icon('lock')}<span>Para crear tu propio canal, <button class="link" data-act="login">inicia sesión o regístrate</button>.</span></div>`;
+  else if (own) createBox = `<div class="create-box">${icon('crown')}<span>Tu canal es <button class="link" data-join="${esc(own.name)}">${esc(own.name)}</button>. Cada usuario puede crear un canal.</span></div>`;
+  else createBox = `<button class="btn primary" data-act="create">${icon('plus')} Crear mi canal</button>`;
   const items = list.map((c) => `<button class="room" data-join="${esc(c.name)}">
       <span class="room-ico">${icon('hash')}</span>
-      <span class="room-info"><b>${esc(c.name.slice(1))}</b><small>${c.n} ${c.n === 1 ? 'persona' : 'personas'} conectada${c.n === 1 ? '' : 's'}</small></span>
-      <span class="room-go">${joined(c.name.toLowerCase()) ? 'Abrir' : 'Entrar'}</span></button>`).join('');
+      <span class="room-info"><b>${esc(c.name.slice(1))}${state.account && c.owner_id === state.account.id ? ` <span class="role owner" title="Tu canal">${icon('crown')}</span>` : ''}</b><small>${c.topic ? esc(c.topic) : '<i>Sin tema</i>'}</small></span>
+      <span class="room-count ${c.n ? 'live' : ''}" title="Personas conectadas">${icon('users')}${c.n}</span></button>`).join('');
   return `<div class="browser" id="browser">
-    <h3>Canales activos</h3>
-    <p class="muted">Elige un canal para entrar o crea uno nuevo. Los canales existen mientras haya alguien dentro.</p>
-    <form class="room-new" id="room-new"><div class="field"><span>#</span><input id="room-name" maxlength="30" autocapitalize="none" spellcheck="false" placeholder="nombre-del-canal" required></div><button class="btn primary" type="submit">${icon('plus')} Crear o unirse</button></form>
-    <div class="rooms">${items || `<div class="rooms-empty">No hay canales activos ahora mismo.<br><button class="link" data-join="#general">Entra en #general</button> o crea el tuyo.</div>`}</div>
+    <div class="browser-head"><div><h3>Canales</h3><p class="muted">Elige un canal para entrar.</p></div>${createBox}</div>
+    <div class="field search">${icon('search')}<input id="room-filter" placeholder="Buscar canales" value="${esc(browserFilter)}" autocomplete="off"></div>
+    <div class="rooms">${items || '<div class="rooms-empty">No hay canales que coincidan.</div>'}</div>
   </div>`;
 }
 function renderBrowser() {
+  if (state.active !== 'status') return;
   const el = document.getElementById('browser');
   if (!el) return;
-  const typed = document.getElementById('room-name')?.value || '';
-  const focused = document.activeElement?.id === 'room-name';
+  const focused = document.activeElement?.id === 'room-filter';
+  const pos = document.getElementById('room-filter')?.selectionStart;
   el.outerHTML = browserHtml();
-  const inp = document.getElementById('room-name');
-  inp.value = typed;
-  if (focused) inp.focus();
-  bindBrowser();
+  if (focused) { const i = document.getElementById('room-filter'); i.focus(); i.setSelectionRange(pos, pos); }
 }
-function bindBrowser() {
-  const form = document.getElementById('room-new');
-  if (!form) return;
-  form.onsubmit = (e) => {
-    e.preventDefault();
-    const v = document.getElementById('room-name').value.trim().replace(/^#/, '');
-    if (v) joinChannel('#' + v);
-  };
+function renderActiveChannels() { renderBrowser(); }
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'room-filter') { browserFilter = e.target.value; renderBrowser(); }
+});
+document.addEventListener('click', (e) => {
+  const j = e.target.closest('#log [data-join]');
+  if (j) { e.preventDefault(); joinChannel(j.dataset.join); return; }
+  const a = e.target.closest('#log [data-act]');
+  if (!a) return;
+  if (a.dataset.act === 'create') createChannelDialog();
+  if (a.dataset.act === 'login') { homeView = 'login'; quitChat(); }
+});
+
+async function createChannelDialog() {
+  const v = await openDialog({
+    title: 'Crear mi canal',
+    text: 'Serás su creador y administrador. Cada usuario puede crear un canal.',
+    fields: [
+      { name: 'name', label: 'Nombre', prefix: '#', max: 30, placeholder: 'mi-canal' },
+      { name: 'topic', label: 'Tema (opcional)', max: 300, placeholder: '¿De qué se habla aquí?', multiline: true },
+    ],
+    confirm: 'Crear canal',
+    validate: async ({ name }) => {
+      const n = '#' + name.replace(/^#/, '');
+      if (!CHAN_RE.test(n)) return 'El nombre solo puede tener letras, números, - o _ (máx. 30).';
+      if (state.channels.has(n.toLowerCase())) return 'Ya existe un canal con ese nombre.';
+      return '';
+    },
+  });
+  if (!v) return;
+  const name = '#' + v.name.replace(/^#/, '');
+  const { error } = await supabase.from('channels').insert({ name, topic: v.topic.slice(0, 300), owner_id: state.account.id }).select().single();
+  if (error) {
+    if (error.code === '23505' && /owner/.test(error.message + error.details)) return toast('Ya tienes un canal creado.');
+    if (error.code === '23505') return toast('Ya existe un canal con ese nombre.');
+    return toast('No se pudo crear el canal: ' + error.message);
+  }
+  await loadChannels();
+  announceChannelsChanged();
+  renderBrowser();
+  joinChannel(name);
 }
 
+/* ---------- Ventanas ---------- */
 function activate(key) {
   const w = state.windows.get(key);
   if (!w) return;
+  closeOverlays();
   state.active = key;
   w.unread = 0; w.mention = false;
   const log = document.getElementById('log');
   if (key === 'status') {
     log.innerHTML = browserHtml() + w.lines.join('');
     log.scrollTop = 0;
-    bindBrowser();
   } else {
     log.innerHTML = w.lines.join('') || '<div class="empty">Aún no hay mensajes. ¡Rompe el hielo!</div>';
     log.scrollTop = log.scrollHeight;
   }
   document.getElementById('win-name').innerHTML = key === 'status' ? esc(w.name) : `${icon('hash', 'title-hash')}${esc(w.name.slice(1))}`;
-  document.getElementById('input').placeholder = key === 'status' ? 'Escribe un /comando… (prueba /join #canal)' : `Mensaje en ${w.name}`;
+  document.getElementById('chan-menu').classList.toggle('hidden', key === 'status');
+  state.setActionMode?.(false);
+  document.getElementById('input-form').classList.toggle('hidden', key === 'status');
   history.replaceState(null, '', key === 'status' ? location.pathname : '#' + w.name.slice(1));
   renderTopic(); renderMembers(); renderChanList(); updateTitle();
-  if (matchMedia('(pointer:fine)').matches) document.getElementById('input').focus();
+  if (key !== 'status' && matchMedia('(pointer:fine)').matches) document.getElementById('input').focus();
 }
 function renderTopic() {
   const w = state.windows.get(state.active);
-  document.getElementById('topic').innerHTML = w.key === 'status' ? 'Elige un canal o crea uno nuevo' : (w.topic ? linkify(w.topic) : '<span class="muted">Sin tema · /topic para añadir uno</span>');
+  document.getElementById('topic').innerHTML = w.key === 'status' ? 'Elige un canal o crea el tuyo' : (w.ch.topic ? linkify(w.ch.topic) : '<span class="muted">Sin tema</span>');
+}
+function sortedPeople(w) {
+  const rank = (p) => (isOwner(w.ch, p.uid) ? 0 : personIsAdmin(w, p) ? 1 : 2);
+  return [...w.people.values()].sort((a, b) => rank(a) - rank(b) || a.nick.localeCompare(b.nick, 'es', { sensitivity: 'base' }));
 }
 function renderMembers() {
   const w = state.windows.get(state.active);
@@ -621,10 +757,13 @@ function renderMembers() {
   el.classList.toggle('hidden', isStatus);
   btn.classList.toggle('hidden', isStatus);
   if (isStatus) return;
-  const people = [...(w.people || new Map()).values()].sort((a, b) => a.nick.localeCompare(b.nick, 'es', { sensitivity: 'base' }));
+  const people = sortedPeople(w);
+  const admins = people.filter((p) => personIsAdmin(w, p));
+  const rest = people.filter((p) => !personIsAdmin(w, p));
+  const row = (p) => `<button class="member" data-cid="${esc(p.cid)}" title="Opciones para ${esc(p.nick)}"><span class="av-wrap">${avatar(p.nick)}<i class="dot on"></i></span><span class="member-nick" style="${nickStyle(p.nick)}">${esc(p.nick)}</span>${p.reg ? verified : ''}${roleBadge(w, p)}${p.me ? '<small>tú</small>' : ''}</button>`;
   document.getElementById('member-count').textContent = people.length;
-  el.innerHTML = `<div class="side-label">En línea — ${people.length}</div>` +
-    people.map((p) => `<button class="member" data-nick="${esc(p.nick)}" title="Mencionar a ${esc(p.nick)}"><span class="av-wrap">${avatar(p.nick)}<i class="dot on"></i></span><span class="member-nick" style="${nickStyle(p.nick)}">${esc(p.nick)}</span>${p.reg ? verified : ''}${p.me ? '<small>tú</small>' : ''}</button>`).join('');
+  el.innerHTML = (admins.length ? `<div class="side-label">Administradores — ${admins.length}</div>${admins.map(row).join('')}` : '') +
+    `<div class="side-label ${admins.length ? 'spaced' : ''}">En línea — ${rest.length}</div>${rest.map(row).join('')}`;
 }
 function completeNick(input) {
   const w = state.windows.get(state.active);
@@ -635,42 +774,46 @@ function completeNick(input) {
 }
 
 /* ===================================================================== */
-/* Canales en tiempo real (Broadcast + Presence, sin base de datos)      */
+/* Canal en tiempo real (Broadcast + Presence)                           */
 /* ===================================================================== */
 function myPresence(w) {
-  return { nick: state.nick, reg: state.registered, topic: w.topic || '', topicTs: w.topicTs || 0, topicBy: w.topicBy || '' };
+  return { nick: state.nick, reg: state.registered, uid: state.account?.id || null, tmp: !!w.myTmp };
 }
-function joinChannel(name) {
-  if (!CHAN_RE.test(name)) return errorLine(`Nombre de canal no válido: ${name}. Usa letras, números, - o _ (ej.: #charla).`);
+async function joinChannel(name) {
   const key = name.toLowerCase();
   if (state.windows.has(key)) return activate(key);
-  const existing = activeChannels().find((c) => c.name.toLowerCase() === key);
-  const w = { key, name: existing?.name || name, topic: '', topicTs: 0, topicBy: '', lines: [], people: new Map(), unread: 0, mention: false, last: null, rt: null, ready: false };
+  if (!state.channels.has(key)) await loadChannels();
+  const ch = state.channels.get(key);
+  if (!ch) { toast(`El canal ${name} no existe.`); return activate('status'); }
+
+  const w = { key, name: ch.name, ch, lines: [], people: new Map(), unread: 0, mention: false, last: null, rt: null, ready: false, myTmp: false };
   state.windows.set(key, w);
   activate(key);
-  sys(key, `Has entrado en <b>${esc(w.name)}</b>. Los mensajes no se guardan.`, 'join');
+  sys(key, `Has entrado en <b>${esc(ch.name)}</b>${ch.topic ? ` — ${linkify(ch.topic)}` : ''}`, 'join');
+  if (iAmOwner(w)) sys(key, 'Eres el creador de este canal. Toca a un usuario de la lista para nombrarlo administrador.', 'info');
 
   const rt = supabase.channel('irc:' + key, { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
-  rt.on('broadcast', { event: 'msg' }, ({ payload: m }) => {
-    if (!m || typeof m.body !== 'string' || typeof m.nick !== 'string') return;
+  const on = (event, fn) => rt.on('broadcast', { event }, ({ payload }) => payload && fn(payload));
+  on('msg', (m) => {
+    if (typeof m.body !== 'string' || typeof m.nick !== 'string') return;
     m.body = m.body.slice(0, MAX_MSG);
     m.ts = Math.min(Number(m.ts) || Date.now(), Date.now());
     addMessage(key, m);
+  });
+  on('topic', (t) => applyTopic(w, t));
+  on('admin', (a) => applyAdmin(w, a));
+  on('kick', (k) => applyKick(w, k));
+  on('deleted', (d) => applyDeleted(w, d));
+  rt.on('presence', { event: 'sync' }, () => {
+    const people = new Map();
+    for (const [cid, metas] of Object.entries(rt.presenceState())) {
+      const p = metas[0];
+      if (!p?.nick) continue;
+      people.set(cid, { cid, nick: p.nick, reg: !!p.reg, uid: p.uid || null, tmp: !!p.tmp, me: cid === state.clientId });
+    }
+    w.people = people;
+    if (state.active === key) renderMembers();
   })
-    .on('broadcast', { event: 'topic' }, ({ payload: t }) => setTopic(w, t, true))
-    .on('presence', { event: 'sync' }, () => {
-      const people = new Map();
-      let best = null;
-      for (const [cid, metas] of Object.entries(rt.presenceState())) {
-        const p = metas[0];
-        if (!p?.nick) continue;
-        people.set(cid, { nick: p.nick, reg: !!p.reg, me: cid === state.clientId });
-        if (p.topicTs && (!best || p.topicTs > best.topicTs)) best = p;
-      }
-      w.people = people;
-      if (best && best.topicTs > w.topicTs) setTopic(w, { topic: best.topic, ts: best.topicTs, by: best.topicBy }, false);
-      if (state.active === key) renderMembers();
-    })
     .on('presence', { event: 'join' }, ({ key: cid, newPresences }) => {
       if (cid !== state.clientId && w.ready && newPresences[0]?.nick) sys(key, `<b>${esc(newPresences[0].nick)}</b> ha entrado`, 'join');
     })
@@ -687,112 +830,218 @@ function joinChannel(name) {
   w.rt = rt;
   trackLobby();
 }
-function setTopic(w, t, announce) {
-  if (!t || typeof t.topic !== 'string') return;
-  const ts = Number(t.ts) || Date.now();
-  if (ts <= w.topicTs) return;
-  w.topic = t.topic.slice(0, 300); w.topicTs = ts; w.topicBy = String(t.by || '').slice(0, 20);
-  if (announce) sys(w.key, `<b>${esc(w.topicBy)}</b> cambió el tema: ${linkify(w.topic)}`, 'topic');
-  else if (w.topic) sys(w.key, `Tema: ${linkify(w.topic)}`, 'topic');
-  if (state.active === w.key) renderTopic();
-  w.rt?.track(myPresence(w)); // así el tema llega a quien entre después
+/** Envía un evento al canal y lo aplica también localmente (broadcast no se devuelve a uno mismo). */
+function emit(w, event, payload, apply) {
+  const full = { ...payload, byCid: state.clientId, by: state.nick };
+  w.rt.send({ type: 'broadcast', event, payload: full });
+  apply?.(w, full, true);
 }
 
-async function partChannel(key) {
+async function partChannel(key, notice = '') {
   const w = state.windows.get(key);
-  if (!w || key === 'status') return errorLine('No estás en un canal.');
+  if (!w || key === 'status') return;
   if (w.rt) await supabase.removeChannel(w.rt);
   state.windows.delete(key);
-  statusLine(`Has salido de ${w.name}.`);
   trackLobby();
-  if (state.active === key) activate('status');
-  else renderChanList();
+  if (notice) sys('status', notice, 'err');
+  if (state.active === key) activate('status'); else renderChanList();
 }
 
 let lastSend = 0;
 function sendMessage(body, kind = 'msg') {
   const w = state.windows.get(state.active);
-  if (!w || w.key === 'status') return errorLine('Únete a un canal para hablar: /join #canal');
-  if (Date.now() - lastSend < 250) return errorLine('Más despacio: espera un momento entre mensajes.');
+  if (!w || w.key === 'status') return;
+  if (Date.now() - lastSend < 250) return toast('Más despacio: espera un momento entre mensajes.');
   lastSend = Date.now();
   const m = { from: state.clientId, nick: state.nick, reg: state.registered, kind, body: body.slice(0, MAX_MSG), ts: Date.now() };
-  addMessage(w.key, m); // eco local inmediato
+  addMessage(w.key, m);
   w.rt.send({ type: 'broadcast', event: 'msg', payload: m }).then((r) => {
     if (r !== 'ok') sys(w.key, 'No se pudo enviar el último mensaje (conexión inestable).', 'err');
   });
 }
 
-/* ===================================================================== */
-/* Comandos                                                              */
-/* ===================================================================== */
-async function handleInput(text) {
-  if (!text.startsWith('/') || text.startsWith('//')) return sendMessage(text.replace(/^\/\//, '/'));
-  const [cmd, ...rest] = text.slice(1).split(' ');
-  const arg = rest.join(' ').trim();
-  switch (cmd.toLowerCase()) {
-    case 'join': case 'j':
-      if (!arg) return errorLine('Uso: /join #canal');
-      return joinChannel(arg.startsWith('#') ? arg.split(' ')[0] : '#' + arg.split(' ')[0]);
-    case 'part': case 'leave':
-      return partChannel(state.active);
-    case 'me':
-      return arg ? sendMessage(arg, 'action') : errorLine('Uso: /me acción');
-    case 'nick': {
-      const nick = arg;
-      if (nick.toLowerCase() === state.nick.toLowerCase()) return;
-      const problem = await nickProblem(nick);
-      if (problem) return errorLine(problem);
-      if (state.registered) {
-        const { error } = await supabase.from('profiles').update({ nick }).eq('id', state.account.id);
-        if (error) return errorLine(error.code === '23505' ? `El nick ${nick} ya está reservado.` : error.message);
-        state.account.nick = nick;
-      } else store.set('lastNick', nick);
-      const old = state.nick;
-      state.nick = nick;
-      updateMe();
-      trackLobby();
-      for (const w of state.windows.values()) {
-        if (!w.rt) continue;
-        w.rt.track(myPresence(w));
-        w.rt.send({ type: 'broadcast', event: 'msg', payload: { from: state.clientId, nick, reg: state.registered, kind: 'action', body: `ahora se llama ${nick} (antes ${old})`, ts: Date.now() } });
-        sys(w.key, `Ahora eres <b>${esc(nick)}</b>${state.registered ? ' (reservado en tu cuenta)' : ''}`, 'info');
-      }
-      return;
+/* ---------- Tema del canal ---------- */
+function applyTopic(w, t, local = false) {
+  if (typeof t.topic !== 'string') return;
+  if (!local && !cidIsAdmin(w, t.byCid)) return;
+  w.ch.topic = t.topic.slice(0, 300);
+  sys(w.key, `<b>${esc(t.by)}</b> cambió el tema: ${w.ch.topic ? linkify(w.ch.topic) : '<i>(sin tema)</i>'}`, 'topic');
+  if (state.active === w.key) renderTopic();
+}
+async function editTopic(w) {
+  const v = await openDialog({ title: `Tema de ${w.name}`, fields: [{ name: 'topic', label: 'Tema', value: w.ch.topic, max: 300, multiline: true, placeholder: '¿De qué se habla aquí?' }], confirm: 'Guardar' });
+  if (!v) return;
+  const { data, error } = await supabase.from('channels').update({ topic: v.topic.slice(0, 300) }).eq('id', w.ch.id).select('topic');
+  if (error || !data?.length) return toast('No tienes permiso para cambiar el tema.');
+  emit(w, 'topic', { topic: data[0].topic }, applyTopic);
+}
+
+/* ---------- Administradores ---------- */
+function applyAdmin(w, a, local = false) {
+  if (!local && !cidIsAdmin(w, a.byCid) && !(a.action === 'revoke' && a.byCid === a.cid)) return;
+  const target = w.people.get(a.cid);
+  const name = target?.nick || a.nick || 'alguien';
+  if (a.perm && a.uid) {
+    if (a.action === 'grant') w.ch.admins.add(a.uid); else w.ch.admins.delete(a.uid);
+  }
+  if (a.cid === state.clientId && !a.perm) {
+    w.myTmp = a.action === 'grant';
+    w.rt.track(myPresence(w));
+  }
+  if (target && !a.perm) target.tmp = a.action === 'grant';
+  const self = a.byCid === a.cid;
+  const kind = a.perm ? '' : ' temporal';
+  sys(w.key, a.action === 'grant'
+    ? `<b>${esc(a.by)}</b> nombró administrador${kind} a <b>${esc(name)}</b>`
+    : self ? `<b>${esc(name)}</b> dejó de ser administrador` : `<b>${esc(a.by)}</b> quitó el cargo de administrador a <b>${esc(name)}</b>`, 'topic');
+  if (a.cid === state.clientId && a.action === 'grant') toast(`Ahora eres administrador${kind} de ${w.name}`);
+  if (state.active === w.key) renderMembers();
+  renderChanList();
+}
+async function grantAdmin(w, p) {
+  const perm = !!p.uid && iAmPermAdmin(w);
+  if (perm) {
+    const { error } = await supabase.from('channel_admins').insert({ channel_id: w.ch.id, user_id: p.uid, granted_by: state.account.id });
+    if (error && error.code !== '23505') return toast('No se pudo nombrar administrador: ' + error.message);
+  }
+  emit(w, 'admin', { action: 'grant', cid: p.cid, uid: p.uid, nick: p.nick, perm }, applyAdmin);
+}
+async function revokeAdmin(w, p) {
+  const perm = isPermAdmin(w.ch, p.uid) && !isOwner(w.ch, p.uid);
+  if (perm) {
+    const { data, error } = await supabase.from('channel_admins').delete().eq('channel_id', w.ch.id).eq('user_id', p.uid).select();
+    if (error || !data?.length) return toast('Solo el creador del canal puede quitar administradores permanentes.');
+  }
+  emit(w, 'admin', { action: 'revoke', cid: p.cid, uid: p.uid, nick: p.nick, perm }, applyAdmin);
+}
+async function adminsDialog(w) {
+  const ids = [w.ch.owner_id, ...w.ch.admins].filter(Boolean);
+  let nicks = new Map();
+  if (ids.length) {
+    const { data } = await supabase.from('profiles').select('id, nick').in('id', ids);
+    nicks = new Map((data || []).map((r) => [r.id, r.nick]));
+  }
+  const online = new Set([...w.people.values()].map((p) => p.uid).filter(Boolean));
+  const temps = [...w.people.values()].filter((p) => p.tmp && !isPermAdmin(w.ch, p.uid));
+  const row = (nick, label, on) => `<li>${avatar(nick)}<span><b>${esc(nick)}</b><small>${label}${on ? ' · en línea' : ''}</small></span></li>`;
+  const html = `<ul class="admin-list">
+    ${w.ch.owner_id ? row(nicks.get(w.ch.owner_id) || '?', 'Creador', online.has(w.ch.owner_id)) : '<li class="muted">Canal del sistema (sin creador)</li>'}
+    ${[...w.ch.admins].filter((id) => id !== w.ch.owner_id).map((id) => row(nicks.get(id) || '?', 'Administrador', online.has(id))).join('')}
+    ${temps.map((p) => row(p.nick, 'Administrador temporal', true)).join('')}
+  </ul>`;
+  openDialog({ title: `Administradores de ${w.name}`, text: html, confirm: 'Cerrar' });
+  document.querySelector('.dialog [data-cancel]')?.remove();
+}
+
+/* ---------- Expulsar ---------- */
+function applyKick(w, k, local = false) {
+  if (!local && !cidIsAdmin(w, k.byCid)) return;
+  if (k.cid === state.clientId) {
+    partChannel(w.key, `<b>${esc(k.by)}</b> te expulsó de <b>${esc(w.name)}</b>.`);
+    toast(`Te expulsaron de ${w.name}`);
+    return;
+  }
+  sys(w.key, `<b>${esc(k.by)}</b> expulsó a <b>${esc(k.nick)}</b> del canal`, 'part');
+}
+function canKick(w, p) {
+  if (p.me || isOwner(w.ch, p.uid)) return false;
+  if (iAmOwner(w)) return true;
+  return iAmAdmin(w) && !personIsAdmin(w, p);
+}
+
+/* ---------- Borrar canal ---------- */
+function applyDeleted(w, d, local = false) {
+  if (!local && !(d.byCid && w.people.get(d.byCid)?.uid === w.ch.owner_id)) return;
+  state.channels.delete(w.key);
+  partChannel(w.key, local ? `Eliminaste el canal <b>${esc(w.name)}</b>.` : `<b>${esc(d.by)}</b> eliminó el canal <b>${esc(w.name)}</b>.`);
+  renderBrowser();
+}
+async function deleteChannel(w) {
+  const ok = await openDialog({ title: `Eliminar ${w.name}`, text: 'Se cerrará para todas las personas conectadas y se borrarán sus administradores. Después podrás crear otro canal.', confirm: 'Eliminar canal', danger: true });
+  if (!ok) return;
+  const { data, error } = await supabase.from('channels').delete().eq('id', w.ch.id).select('id');
+  if (error || !data?.length) return toast('No se pudo eliminar el canal.');
+  emit(w, 'deleted', {}, applyDeleted);
+  announceChannelsChanged();
+}
+
+/* ---------- Menús ---------- */
+function memberMenu(anchor, cid) {
+  const w = state.windows.get(state.active);
+  const p = w?.people.get(cid);
+  if (!p) return;
+  const items = [];
+  if (!p.me) items.push({ label: 'Mencionar', icon: 'at', onClick: () => { const i = document.getElementById('input'); i.value = (i.value ? i.value.replace(/\s*$/, ' ') : '') + p.nick + (i.value ? ' ' : ': '); i.focus(); document.getElementById('app').classList.remove('members-open'); } });
+  if (iAmAdmin(w) && !p.me) {
+    if (!personIsAdmin(w, p)) {
+      const perm = !!p.uid && iAmPermAdmin(w);
+      items.push({ label: 'Hacer administrador', hint: perm ? 'Permanente: lo conserva en su cuenta' : p.uid ? 'Temporal: solo un admin registrado puede darlo permanente' : 'Temporal: hasta que salga del canal', icon: 'shield', onClick: () => grantAdmin(w, p) });
+    } else if (!isOwner(w.ch, p.uid) && (iAmOwner(w) || (p.tmp && !isPermAdmin(w.ch, p.uid)))) {
+      items.push({ label: 'Quitar administrador', icon: 'shield-off', onClick: () => revokeAdmin(w, p) });
     }
-    case 'topic': {
-      const w = state.windows.get(state.active);
-      if (!w?.rt) return errorLine('No estás en un canal.');
-      if (!arg) return sys(w.key, `Tema: ${w.topic ? linkify(w.topic) : '(sin tema)'}`, 'topic');
-      const t = { topic: arg.slice(0, 300), ts: Date.now(), by: state.nick };
-      w.rt.send({ type: 'broadcast', event: 'topic', payload: t });
-      setTopic(w, t, true);
-      return;
-    }
-    case 'list': {
-      const list = activeChannels();
-      sys(state.active, '<b>Canales activos ahora</b> (clic para entrar):<br>' + (list.map((c) => `<a href="#" data-join="${esc(c.name)}">${esc(c.name)}</a> — ${c.n} ${c.n === 1 ? 'persona' : 'personas'}`).join('<br>') || 'Ninguno. Crea uno con /join #nombre'), 'info');
-      return;
-    }
-    case 'clear': {
-      const w = state.windows.get(state.active);
-      w.lines = []; w.last = null; document.getElementById('log').innerHTML = '';
-      return;
-    }
-    case 'help':
-      sys(state.active, '<b>Comandos</b><br>' + COMMANDS.map(([c, a, d]) => `<code>${c}${a ? ' ' + esc(a) : ''}</code> — ${esc(d)}`).join('<br>'), 'info');
-      return;
-    case 'quit': case 'exit':
-      for (const w of state.windows.values()) if (w.rt) await supabase.removeChannel(w.rt);
-      state.windows.clear();
-      state.nick = null;
-      state.lobby.untrack();
-      history.replaceState(null, '', location.pathname);
-      return renderHome();
-    default:
-      return errorLine(`Comando desconocido: /${cmd}. Escribe /help.`);
+    if (canKick(w, p)) items.push('-', { label: 'Expulsar del canal', icon: 'door', danger: true, onClick: () => emit(w, 'kick', { cid: p.cid, nick: p.nick }, applyKick) });
+  }
+  if (p.me && iAmAdmin(w) && !iAmOwner(w)) items.push({ label: 'Dejar de ser administrador', icon: 'shield-off', onClick: () => revokeAdmin(w, p) });
+  if (p.me) items.push({ label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog });
+  const role = isOwner(w.ch, p.uid) ? 'Creador del canal' : personIsAdmin(w, p) ? (isPermAdmin(w.ch, p.uid) ? 'Administrador' : 'Administrador temporal') : p.reg ? 'Usuario registrado' : 'Invitado';
+  openMenu(anchor, items.length ? items : [{ label: 'Sin acciones disponibles', disabled: true }], { title: `${avatar(p.nick)}<span><b>${esc(p.nick)}</b><small>${role}</small></span>` });
+}
+function channelMenu(anchor) {
+  const w = state.windows.get(state.active);
+  if (!w || w.key === 'status') return;
+  const items = [];
+  if (iAmPermAdmin(w)) items.push({ label: 'Editar tema', icon: 'edit', onClick: () => editTopic(w) });
+  items.push({ label: 'Ver administradores', icon: 'shield', onClick: () => adminsDialog(w) });
+  items.push({ label: 'Copiar enlace del canal', icon: 'link', onClick: () => navigator.clipboard?.writeText(location.origin + '/#' + w.name.slice(1)).then(() => toast('Enlace copiado')) });
+  items.push({ label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } });
+  items.push('-', { label: 'Salir del canal', icon: 'door', onClick: () => partChannel(w.key) });
+  if (iAmOwner(w)) items.push({ label: 'Eliminar canal', icon: 'trash', danger: true, onClick: () => deleteChannel(w) });
+  openMenu(anchor, items, { title: `<span><b>${esc(w.name)}</b><small>${w.ch.owner_id ? (iAmOwner(w) ? 'Tu canal' : iAmAdmin(w) ? 'Eres administrador' : 'Canal de usuario') : 'Canal del sistema'}</small></span>` });
+}
+function userMenu(anchor) {
+  const items = [
+    { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
+    { label: document.documentElement.dataset.theme === 'dark' ? 'Tema claro' : 'Tema oscuro', icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', onClick: toggleTheme },
+  ];
+  if (state.registered && !myOwnChannel()) items.push({ label: 'Crear mi canal', icon: 'plus', onClick: () => { activate('status'); createChannelDialog(); } });
+  items.push('-', { label: 'Salir del chat', icon: 'logout', onClick: quitChat });
+  if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
+  openMenu(anchor, items, { title: `${avatar(state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
+}
+
+async function changeNickDialog() {
+  const v = await openDialog({
+    title: 'Cambiar mi nick',
+    text: state.registered ? 'El nuevo nick quedará reservado en tu cuenta.' : 'Como invitado, el nick dura mientras estés conectado.',
+    fields: [{ name: 'nick', label: 'Nuevo nick', prefix: '@', value: state.nick, max: 20 }],
+    confirm: 'Cambiar',
+    validate: async ({ nick }) => (nick.toLowerCase() === state.nick.toLowerCase() ? '' : await nickProblem(nick)),
+  });
+  if (!v || v.nick === state.nick) return;
+  const nick = v.nick;
+  if (state.registered) {
+    const { error } = await supabase.from('profiles').update({ nick }).eq('id', state.account.id);
+    if (error) return toast(error.code === '23505' ? `El nick ${nick} ya está reservado.` : error.message);
+    state.account.nick = nick;
+  } else store.set('lastNick', nick);
+  const old = state.nick;
+  state.nick = nick;
+  updateMe();
+  trackLobby();
+  for (const w of state.windows.values()) {
+    if (!w.rt) continue;
+    w.rt.track(myPresence(w));
+    w.rt.send({ type: 'broadcast', event: 'msg', payload: { from: state.clientId, nick, reg: state.registered, kind: 'action', body: `ahora se llama ${nick} (antes ${old})`, ts: Date.now() } });
+    sys(w.key, `Ahora eres <b>${esc(nick)}</b>`, 'info');
   }
 }
-document.addEventListener('click', (e) => {
-  const a = e.target.closest('#log [data-join]');
-  if (a) { e.preventDefault(); joinChannel(a.dataset.join); }
-});
+
+async function quitChat() {
+  closeOverlays();
+  for (const w of state.windows.values()) if (w.rt) await supabase.removeChannel(w.rt);
+  state.windows.clear();
+  state.nick = null;
+  state.lobby.untrack();
+  history.replaceState(null, '', location.pathname);
+  renderHome();
+}
