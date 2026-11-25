@@ -3,6 +3,7 @@ import { supabase, configured, configError } from './supabase.js';
 import { createDM } from './dm.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, translatedFrom } from './i18n.js';
 import { translate } from './translate.js';
+import { APP_NAME, logoSvg, flag } from './brand.js';
 
 setLang(initialLang());
 startI18n();
@@ -79,6 +80,8 @@ const I = {
   play: '<path d="M7 4v16l13-8z" fill="currentColor"/>',
   pause: '<path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/>',
   check2: '<path d="m2.5 12.5 4 4 10-10M11.5 16.5l1 0L22 6.5"/>',
+  'eye-off': '<path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3.3 3.9M6.3 7.6A17 17 0 0 0 2 12s4 6 10 6a10 10 0 0 0 4.2-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  zap: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   pdf: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h4"/>',
   translate: '<path d="M4 5h9M8.5 3v2M6 5c0 4 3 7 6 8M11 5c0 3-3 7-7 9"/><path d="m13 20 4-9 4 9M14.5 17h5"/>',
@@ -105,7 +108,7 @@ else if (configError) renderNotice('Error de configuración', esc(configError));
 else boot().catch((e) => renderNotice('Error', esc(e.message || String(e))));
 
 function renderNotice(title, html) {
-  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="brand"><span class="logo">#</span><h1>${esc(title)}</h1></div><p class="muted">${html}</p></div></div>`;
+  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="brand">${logoSvg(44, 'nt')}<h1>${esc(title)}</h1></div><p class="muted">${html}</p></div></div>`;
 }
 
 async function boot() {
@@ -239,19 +242,54 @@ function renderHome(message = '', kind = 'error') {
         <button class="btn primary block" type="submit">${isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</button></form>
       <p class="alt-links">${isLogin ? '¿No tienes cuenta? <button type="button" class="link" data-view="register">Crear cuenta</button>' : '¿Ya tienes cuenta? <button type="button" class="link" data-view="login">Iniciar sesión</button>'}</p>`;
   }
-  const langPick = `<label class="lang-pick" title="Idioma">${icon('globe')}<select id="lang-select" aria-label="Idioma">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === getLang() ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
-  root.innerHTML = `<div class="auth"><div class="auth-card">
-    ${langPick}
-    <div class="brand"><span class="logo">#</span><div><h1>Chat IRC</h1><p class="muted">Canales, nicks y conversación en tiempo real</p></div></div>
-    ${body}
-    <p class="muted small center lang-note">${icon('translate')} ${esc(t('Los mensajes de otros idiomas se traducirán al'))} <b class="ugc">${esc(LANGS[getLang()])}</b>.</p>
-    <p class="muted small center note">Las conversaciones no se guardan: solo ves lo que se dice mientras estás conectado.</p>
-  </div></div>`;
+  const lg = getLang();
+  const langPick = `<div class="lang-dd">
+      <button type="button" class="lang-btn" id="lang-btn" aria-haspopup="listbox" title="Idioma">${flag(lg)}<span class="ugc">${esc(LANGS[lg])}</span><svg class="caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+      <div class="lang-list hidden" id="lang-list" role="listbox">${Object.entries(LANGS).map(([k, v]) => `<button type="button" role="option" data-lang="${k}" class="${k === lg ? 'sel' : ''}">${flag(k)}<span class="ugc">${esc(v)}</span></button>`).join('')}</div>
+    </div>`;
+  const BENEFITS = [
+    ['hash', 'Canales temáticos', 'Únete a salas abiertas o crea la tuya y modérala con tus propios administradores.'],
+    ['lock', 'Privados cifrados', 'Mensajes, fotos, vídeos, documentos y notas de voz de persona a persona, cifrados de extremo a extremo.'],
+    ['video', 'Llamadas y videollamadas', 'Habla cara a cara desde el navegador, en el ordenador o en el móvil.'],
+    ['translate', 'Traducción automática', 'Escribe en tu idioma: cada persona lee los mensajes en el suyo.'],
+    ['eye-off', 'Sin historial', 'Nada se guarda en servidores. Si quieres conservar una charla, expórtala a PDF.'],
+    ['zap', 'Gratis y sin instalar', 'Funciona en cualquier navegador moderno, sin descargas ni registros obligatorios.'],
+  ];
+  root.innerHTML = `<div class="landing">
+    <header class="banner">
+      <div class="banner-inner">
+        <a class="banner-brand" href="/" aria-label="${APP_NAME}">${logoSvg(46, 'bn')}<span class="ugc">${APP_NAME}</span></a>
+        <span class="banner-tag">Canales, nicks y conversación en tiempo real</span>
+        ${langPick}
+      </div>
+    </header>
+    <main class="landing-main">
+      <section class="pitch">
+        <h1>Chatea en tiempo real, sin instalar nada</h1>
+        <p class="pitch-lead"><span class="ugc">${APP_NAME}</span> <span>combina el espíritu de los clásicos canales de chat con todo lo que esperas de una app de mensajería moderna. Entra con un nick y empieza a hablar.</span></p>
+        <ul class="benefits">${BENEFITS.map(([ic, h, d]) => `<li><span class="b-ico">${icon(ic)}</span><div><b>${h}</b><p>${d}</p></div></li>`).join('')}</ul>
+      </section>
+      <aside class="auth-card">
+        ${body}
+        <p class="muted small center lang-note">${icon('translate')} ${esc(t('Los mensajes de otros idiomas se traducirán al'))} <b class="ugc">${esc(LANGS[lg])}</b>.</p>
+        <p class="muted small center note">Las conversaciones no se guardan: solo ves lo que se dice mientras estás conectado.</p>
+      </aside>
+    </main>
+    <footer class="landing-foot"><span class="ugc">© ${new Date().getFullYear()} ${APP_NAME}</span> · <a href="/privacidad.html">Privacidad</a> · <a href="/terminos.html">Condiciones</a></footer>
+  </div>`;
 
   root.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => { homeView = b.dataset.view; renderHome(); }));
-  document.getElementById('lang-select').onchange = (e) => {
+  const list = document.getElementById('lang-list');
+  document.getElementById('lang-btn').onclick = (e) => { e.stopPropagation(); list.classList.toggle('hidden'); };
+  document.addEventListener('click', function closeLang(e) {
+    if (!document.getElementById('lang-list')) return document.removeEventListener('click', closeLang);
+    if (!e.target.closest('.lang-dd')) list.classList.add('hidden');
+  });
+  list.onclick = (e) => {
+    const b = e.target.closest('[data-lang]');
+    if (!b) return;
     const nick = document.getElementById('nick')?.value;
-    setLang(e.target.value);
+    setLang(b.dataset.lang);
     renderHome();
     if (nick !== undefined && document.getElementById('nick')) document.getElementById('nick').value = nick;
   };
@@ -360,7 +398,7 @@ function openMenu(anchor, items, { title } = {}) {
   m.setAttribute('role', 'menu');
   m.innerHTML = (title ? `<div class="menu-title">${title}</div>` : '') + items.map((it, i) => it === '-'
     ? '<hr>'
-    : `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}" ${it.disabled ? 'disabled' : ''}>${it.icon ? icon(it.icon) : ''}<span>${esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</span></button>`).join('');
+    : `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}" ${it.disabled ? 'disabled' : ''}>${it.icon ? icon(it.icon) : ''}<span>${it.html || esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</span></button>`).join('');
   document.body.appendChild(m);
   const r = anchor.getBoundingClientRect();
   const mw = m.offsetWidth, mh = m.offsetHeight;
@@ -471,7 +509,7 @@ function enterChat(nick, registered, channel) {
 function renderClient() {
   root.innerHTML = `<div class="app" id="app">
     <aside class="sidebar">
-      <header class="side-head"><span class="logo sm">#</span><b>Chat IRC</b>
+      <header class="side-head">${logoSvg(32, 'sd')}<b class="ugc">${APP_NAME}</b>
         <button class="icon-btn mobile-only" id="close-side" title="Cerrar">${icon('x')}</button></header>
       <div class="side-section">
         <nav id="nav-browse"></nav>
@@ -646,14 +684,16 @@ function updateThemeBtn() {
 function updateTitle() {
   const w = state.windows.get(state.active);
   const unread = [...state.windows.values()].reduce((n, x) => n + (x.unread || 0), 0);
-  document.title = (unread ? `(${unread}) ` : '') + (w && w.key !== 'status' ? w.name + ' · ' : '') + 'Chat IRC';
+  document.title = (unread ? `(${unread}) ` : '') + (w && w.key !== 'status' ? w.name + ' · ' : '') + APP_NAME;
 }
 
 /* ---------- Avatares y colores ---------- */
 function hue(nick) { let h = 0; for (const c of nick.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; }
 const nickStyle = (nick) => `--h:${hue(nick)}`;
+/** Avatares en la gama de rojos de ChamuFlac (rojos, rubíes, corales, vinos). */
 function avatar(nick) {
-  return `<span class="avatar" style="${nickStyle(nick)}">${esc(nick.replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase() || '?')}</span>`;
+  const h = hue(nick);
+  return `<span class="avatar" style="--h:${(340 + (h % 50)) % 360};--l:${42 + (h % 4) * 6}%">${esc(nick.replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase() || '?')}</span>`;
 }
 
 /* ---------- Mensajes ---------- */
@@ -1185,7 +1225,7 @@ function userMenu(anchor) {
   const items = [
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
     { label: document.documentElement.dataset.theme === 'dark' ? 'Tema claro' : 'Tema oscuro', icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', onClick: toggleTheme },
-    { label: 'Idioma', hint: LANGS[getLang()], icon: 'globe', onClick: () => languageMenu(anchor) },
+    { label: 'Idioma', html: `<span class="lang-opt">${esc(t('Idioma'))}: ${flag(getLang())}<span class="ugc">${esc(LANGS[getLang()])}</span></span>`, icon: 'globe', onClick: () => languageMenu(anchor) },
   ];
   if (state.registered && !myOwnChannel()) items.push({ label: 'Crear mi canal', icon: 'plus', onClick: () => { activate('status'); createChannelDialog(); } });
   items.push('-', { label: 'Salir del chat', icon: 'logout', onClick: quitChat });
@@ -1195,7 +1235,7 @@ function userMenu(anchor) {
 
 function languageMenu(anchor) {
   openMenu(anchor, Object.entries(LANGS).map(([k, v]) => ({
-    label: (k === getLang() ? '✓ ' : '') + v, onClick: () => {
+    label: v, html: `<span class="lang-opt">${flag(k)}<span class="ugc">${esc(v)}</span>${k === getLang() ? ' ✓' : ''}</span>`, onClick: () => {
       setLang(k);
       // Se vuelve a pintar la interfaz en el nuevo idioma
       const active = state.active;
@@ -1294,7 +1334,7 @@ async function exportPdf(w) {
   const people = isDm ? [state.nick, w.peer.nick] : [...w.people.values()].map((p) => p.nick);
   const title = isDm ? `${t('Conversación privada con')} ${w.peer.nick}` : w.name;
   const css = [...document.styleSheets].map((ss) => { try { return [...ss.cssRules].map((r) => r.cssText).join('\n'); } catch { return ''; } }).join('\n');
-  const fileName = `chat-irc_${(isDm ? w.peer.nick : w.name.slice(1)).replace(/[^\w-]/g, '')}_${now.toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+  const fileName = `chamuflac_${(isDm ? w.peer.nick : w.name.slice(1)).replace(/[^\w-]/g, '')}_${now.toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
   const html = `<!doctype html><html lang="${getLang()}" data-theme="light"><head><meta charset="utf-8"><title>${esc(fileName)}</title>
     <style>${css}
       html, body { overflow: visible !important; height: auto !important; background: #fff !important; }
@@ -1315,7 +1355,7 @@ async function exportPdf(w) {
       @page { margin: 14mm; }
     </style></head>
     <body><header class="pdf-head"><h1>${esc(title)}</h1>
-      <p>${esc(t('Exportado el'))} ${esc(when)} · Chat IRC</p>
+      <p>${esc(t('Exportado el'))} ${esc(when)} · ${APP_NAME}</p>
       <p>${esc(t('Participantes'))}: ${people.map(esc).join(', ')}</p></header>
       <div class="app ${isDm ? 'in-dm' : ''}"><div class="log">${log.innerHTML}</div></div>
       <p class="pdf-foot">${esc(t('Las conversaciones no se guardan en ningún servidor: este documento es la única copia.'))}</p></body></html>`;
