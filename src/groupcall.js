@@ -59,6 +59,7 @@ export function createGroupCall(ctx) {
   function leave() {
     if (!call) return;
     const w = call.w;
+    w.rt?.send({ type: 'broadcast', event: 'gc', payload: { to: '*', from: state.clientId, bye: true } });
     clearInterval(call.timer);
     call.peers.forEach((p) => p.pc.close());
     call.stream.getTracks().forEach((tr) => tr.stop());
@@ -76,55 +77,89 @@ export function createGroupCall(ctx) {
     if (!isActiveIn(w)) return;
     const inCall = new Set(participants(w).filter((p) => !p.me).map((p) => p.cid));
     for (const cid of inCall) if (!call.peers.has(cid)) connect(cid);
-    for (const [cid, p] of call.peers) if (!inCall.has(cid)) { p.pc.close(); call.peers.delete(cid); }
+    const inChannel = new Set(w.people.keys());
+    for (const [cid, p] of call.peers) {
+      // Se suelta a quien salió de la llamada (con margen para conexiones recién creadas)
+      const gone = !inChannel.has(cid) || (!inCall.has(cid) && Date.now() - p.created > 10000);
+      if (gone) { p.pc.close(); call.peers.delete(cid); }
+    }
     renderTiles();
   }
+  /*
+   * En cada pareja solo uno inicia (el de identificador menor): crea los canales de
+   * audio y vídeo y envía la oferta. El otro responde enchufando sus pistas en esos
+   * mismos canales. Así nunca hay ofertas cruzadas ni canales duplicados.
+   */
+  const localTrack = (kind) => (kind === 'video' ? (call.camOn ? call.stream.getVideoTracks()[0] : null) : call.stream.getAudioTracks()[0]) || null;
   function connect(cid) {
     const pc = new RTCPeerConnection({ iceServers: iceServers() });
-    const peer = { cid, pc, remote: new MediaStream(), polite: state.clientId > cid, makingOffer: false, ignoreOffer: false, pendingIce: [] };
+    const offerer = state.clientId < cid;
+    const peer = { cid, pc, offerer, remote: new MediaStream(), created: Date.now(), pendingIce: [] };
     call.peers.set(cid, peer);
-    for (const tr of call.stream.getTracks()) {
-      const sender = pc.addTrack(tr, call.stream);
-      if (tr.kind === 'video' && !call.camOn) { sender.__video = true; sender.replaceTrack(null); }
-    }
     pc.onicecandidate = ({ candidate }) => candidate && send(cid, { candidate });
-    pc.onnegotiationneeded = async () => {
-      try { peer.makingOffer = true; await pc.setLocalDescription(); send(cid, { description: pc.localDescription }); } catch { /* reintento automático */ } finally { peer.makingOffer = false; }
-    };
     pc.ontrack = ({ track }) => {
       peer.remote.getTracks().filter((x) => x.kind === track.kind).forEach((x) => peer.remote.removeTrack(x));
       peer.remote.addTrack(track);
       track.onmute = track.onunmute = renderTiles;
       renderTiles();
     };
-    pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') pc.restartIce?.(); renderTiles(); };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' && peer.offerer) offer(peer, true);
+      renderTiles();
+    };
+    if (offerer) {
+      for (const kind of ['audio', 'video']) pc.addTransceiver(kind, { direction: 'sendrecv' }).sender.replaceTrack(localTrack(kind));
+      offer(peer);
+    }
+  }
+  async function offer(peer, iceRestart = false) {
+    try {
+      await peer.pc.setLocalDescription(await peer.pc.createOffer({ iceRestart }));
+      send(peer.cid, { description: peer.pc.localDescription });
+    } catch { /* la conexión se cerró */ }
   }
   function send(to, data) {
     call?.w.rt?.send({ type: 'broadcast', event: 'gc', payload: { to, from: state.clientId, ...data } });
   }
+  function dropPeer(cid) {
+    const p = call?.peers.get(cid);
+    if (!p) return;
+    p.pc.close();
+    call.peers.delete(cid);
+    renderTiles();
+  }
   /** Señalización recibida por el canal. */
   async function onSignal(w, msg) {
-    if (!isActiveIn(w) || msg.to !== state.clientId) return;
+    if (!isActiveIn(w) || !msg.from || msg.from === state.clientId) return;
+    if (msg.bye) return dropPeer(msg.from);
+    if (msg.to !== state.clientId) return;
     let peer = call.peers.get(msg.from);
     if (!peer) {
-      if (!w.people.get(msg.from)?.call) return; // solo participantes reales
+      // Puede llegar la señal antes que la actualización de presencia: basta con que esté en el canal
+      if (!w.people.has(msg.from)) return;
       connect(msg.from);
       peer = call.peers.get(msg.from);
     }
     const pc = peer.pc;
     try {
       if (msg.description) {
-        const collision = msg.description.type === 'offer' && (peer.makingOffer || pc.signalingState !== 'stable');
-        peer.ignoreOffer = !peer.polite && collision;
-        if (peer.ignoreOffer) return;
+        if (msg.description.type === 'offer' && peer.offerer) return; // no debería pasar: el iniciador es fijo
         await pc.setRemoteDescription(msg.description);
         for (const c of peer.pendingIce.splice(0)) pc.addIceCandidate(c).catch(() => {});
-        if (msg.description.type === 'offer') { await pc.setLocalDescription(); send(msg.from, { description: pc.localDescription }); }
+        if (msg.description.type === 'offer') {
+          // Enchufamos nuestras pistas en los canales que creó el otro
+          for (const tr of pc.getTransceivers()) {
+            tr.direction = 'sendrecv';
+            await tr.sender.replaceTrack(localTrack(tr.receiver.track.kind));
+          }
+          await pc.setLocalDescription(await pc.createAnswer());
+          send(msg.from, { description: pc.localDescription });
+        }
       } else if (msg.candidate) {
         if (!pc.remoteDescription) peer.pendingIce.push(msg.candidate);
         else await pc.addIceCandidate(msg.candidate).catch(() => {});
       }
-    } catch { /* se ignora: la negociación se reintenta */ }
+    } catch { /* se ignora: se reintenta si falla la conexión */ }
   }
 
   /* ---------------- Pantalla de la llamada ---------------- */
@@ -151,7 +186,7 @@ export function createGroupCall(ctx) {
         call.camOn = !call.camOn;
         const vt = call.stream.getVideoTracks()[0];
         if (vt) vt.enabled = call.camOn;
-        call.peers.forEach((p) => p.pc.getSenders().filter((sd) => sd.track?.kind === 'video' || sd.__video).forEach((sd) => { sd.__video = true; sd.replaceTrack(call.camOn ? vt : null); }));
+        call.peers.forEach((p) => p.pc.getTransceivers().filter((tr) => tr.receiver.track.kind === 'video').forEach((tr) => tr.sender.replaceTrack(call.camOn ? vt : null)));
         renderControls(); renderTiles();
       }
       if (a === 'min') { el.classList.add('minimized'); }
@@ -197,6 +232,7 @@ export function createGroupCall(ctx) {
     grid.dataset.n = Math.min(wanted.length, 9);
   }
 
+  window.__gcDebug = () => call && [...call.peers.values()].map((p) => ({ cid: p.cid.slice(0, 6), offerer: p.offerer, pc: p.pc.connectionState, sig: p.pc.signalingState, ice: p.pc.iceConnectionState, tracks: p.remote.getTracks().map((x) => x.kind + (x.muted ? '(muted)' : '')) }));
   return {
     join, leave, onSignal, syncPeers, renderBanner,
     inCall: (w) => isActiveIn(w),

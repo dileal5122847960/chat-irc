@@ -1411,9 +1411,13 @@ const sessionSetPw = (ch, v) => { try { v ? sessionStorage.setItem(pwKey(ch), v)
 /** Devuelve el secreto del canal privado (pidiendo la contraseña si hace falta) o null si se cancela. */
 async function privateAccess(ch) {
   const ask = async (pw) => supabase.rpc('channel_access', { p_channel: ch.id, p_password: pw ?? null });
-  let r = await ask(sessionGetPw(ch));
-  if (!r.error && r.data) return r.data;
-  if (r.error && r.error.code !== '28P01') { toast(r.error.message); return null; }
+  const saved = sessionGetPw(ch);
+  let r = null;
+  if (saved || state.registered) { // los admins registrados entran sin contraseña
+    r = await ask(saved);
+    if (!r.error && r.data) return r.data;
+    if (r.error && r.error.code !== '28P01') { toast(r.error.message); return null; }
+  }
   let secret = null;
   const v = await openDialog({
     title: `${ch.name}`,
