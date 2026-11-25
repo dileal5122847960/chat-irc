@@ -1,5 +1,6 @@
 import './style.css';
 import { supabase, configured, configError } from './supabase.js';
+import { createDM } from './dm.js';
 
 /*
  * Arquitectura
@@ -58,6 +59,17 @@ const I = {
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   eraser: '<path d="m7 21-4-4L14 6l6 6-9 9zM9 21h12M10 10l6 6"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z"/>',
+  'phone-off': '<path d="M3 14.5c5-5 13-5 18 0l-2 2.5-3.5-1.5v-2.5a10 10 0 0 0-7 0v2.5L5 17z"/>',
+  video: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/>',
+  'video-off': '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3zM2 3l20 18"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  'mic-off': '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M3 3l18 18"/>',
+  clip: '<path d="M20 11.5 12.5 19a5 5 0 0 1-7-7l8-8a3.3 3.3 0 0 1 4.7 4.7l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  message: '<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>',
 };
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 const verified = '<span class="verified" title="Usuario registrado">' + icon('check') + '</span>';
@@ -130,7 +142,7 @@ function lobbyEntries() {
 }
 function trackLobby() {
   if (!state.nick) return;
-  const chans = [...state.windows.values()].filter((w) => w.key !== 'status').map((w) => w.name);
+  const chans = [...state.windows.values()].filter((w) => w.key !== 'status' && w.kind !== 'dm').map((w) => w.name);
   state.lobby.track({ nick: state.nick, reg: state.registered, uid: state.account?.id || null, chans });
 }
 function activeChannels() {
@@ -139,7 +151,7 @@ function activeChannels() {
     const k = c.toLowerCase();
     counts.set(k, { name: counts.get(k)?.name || c, n: (counts.get(k)?.n || 0) + 1 });
   }
-  for (const w of state.windows.values()) if (w.key !== 'status') {
+  for (const w of state.windows.values()) if (w.key !== 'status' && w.kind !== 'dm') {
     counts.set(w.key, { name: w.name, n: (counts.get(w.key)?.n || 0) + 1 });
   }
   return [...counts.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
@@ -403,7 +415,7 @@ async function loadChannels() {
   for (const c of data) map.set(c.name.toLowerCase(), { id: c.id, name: c.name, topic: c.topic, owner_id: c.owner_id, admins: new Set(c.channel_admins.map((a) => a.user_id)) });
   // Conserva el objeto de los canales abiertos para no perder el estado en pantalla
   for (const [k, w] of state.windows) {
-    if (k === 'status') continue;
+    if (k === 'status' || w.kind === 'dm') continue;
     const fresh = map.get(k);
     if (fresh) { Object.assign(w.ch, { topic: fresh.topic, owner_id: fresh.owner_id, admins: fresh.admins }); map.set(k, w.ch); }
   }
@@ -428,6 +440,7 @@ function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
   renderClient();
+  activate('status');
   loadChannels().then(() => {
     renderBrowser(); renderChanList();
     if (channel) joinChannel(channel);
@@ -443,6 +456,8 @@ function renderClient() {
         <nav id="nav-browse"></nav>
         <div class="side-label spaced">Tus canales</div>
         <nav id="chan-list"></nav>
+        <div class="side-label spaced" id="dm-label">Privados</div>
+        <nav id="dm-list"></nav>
       </div>
       <footer class="me">
         <button class="me-btn" id="me-btn" title="Opciones de usuario">
@@ -454,10 +469,13 @@ function renderClient() {
       </footer>
     </aside>
     <div class="scrim" id="scrim"></div>
+    <div class="dm-requests" id="dm-requests" aria-live="polite"></div>
     <main class="chat">
       <header class="chat-head">
         <button class="icon-btn mobile-only" id="open-side" title="Canales">${icon('menu')}</button>
         <div class="chat-title"><h2 id="win-name"></h2><p id="topic"></p></div>
+        <button class="icon-btn hidden" id="call-audio" title="Llamada de voz">${icon('phone')}</button>
+        <button class="icon-btn hidden" id="call-video" title="Videollamada">${icon('video')}</button>
         <button class="icon-btn" id="toggle-members" title="Usuarios">${icon('users')}<span id="member-count"></span></button>
         <button class="icon-btn" id="chan-menu" title="Opciones del canal">${icon('dots')}</button>
       </header>
@@ -468,9 +486,17 @@ function renderClient() {
       <form class="composer" id="input-form">
         <div class="input-wrap">
           <button type="button" class="icon-btn action-toggle" id="action-btn" title="Escribir como acción (* tu_nick hace algo)">${icon('sparkle')}</button>
+          <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
           <input id="input" autocomplete="off" spellcheck="true" maxlength="${MAX_MSG}" placeholder="Escribe un mensaje…">
+          <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
           <button class="send" type="submit" title="Enviar">${icon('send')}</button>
         </div>
+        <div class="rec-bar">
+          <button type="button" class="icon-btn" id="rec-cancel" title="Descartar">${icon('trash')}</button>
+          <span class="rec-dot"></span><span id="rec-time">0:00</span><span class="rec-label">Grabando nota de voz…</span>
+          <button type="button" class="send" id="rec-send" title="Enviar nota de voz">${icon('send')}</button>
+        </div>
+        <input type="file" id="file-input" multiple hidden>
       </form>
     </main>
   </div>`;
@@ -502,9 +528,50 @@ function renderClient() {
   document.getElementById('chan-menu').onclick = (e) => channelMenu(e.currentTarget);
   document.getElementById('members').onclick = (e) => {
     const li = e.target.closest('[data-cid]');
-    if (li) memberMenu(li, li.dataset.cid);
+    if (li && e.detail < 2) memberMenu(li, li.dataset.cid);
   };
-  sys('status', `Conectado como <b>${esc(state.nick)}</b>${state.registered ? ' (registrado)' : ' (invitado)'}. Las conversaciones no se guardan.`, 'info');
+  document.getElementById('members').ondblclick = (e) => {
+    const li = e.target.closest('[data-cid]');
+    if (!li) return;
+    closeOverlays();
+    openPrivate(li.dataset.cid);
+  };
+  document.getElementById('dm-list').onclick = (e) => {
+    const b = e.target.closest('[data-win]');
+    if (!b) return;
+    const w = state.windows.get(b.dataset.win);
+    if (e.target.closest('[data-part]')) return w && dm.closeWindow(w);
+    activate(b.dataset.win); closeSide();
+  };
+  document.getElementById('call-audio').onclick = () => dm.startCall(state.windows.get(state.active), false);
+  document.getElementById('call-video').onclick = () => dm.startCall(state.windows.get(state.active), true);
+  document.getElementById('attach-btn').onclick = () => document.getElementById('file-input').click();
+  document.getElementById('file-input').onchange = (e) => {
+    const w = state.windows.get(state.active);
+    if (w?.kind === 'dm') [...e.target.files].forEach((f) => dm.sendFile(w, f));
+    e.target.value = '';
+  };
+  document.getElementById('mic-btn').onclick = () => dm.startVoice(state.windows.get(state.active));
+  document.getElementById('rec-cancel').onclick = () => dm.stopVoice(false);
+  document.getElementById('rec-send').onclick = () => dm.stopVoice(true);
+  // Pegar o arrastrar archivos en un privado
+  document.getElementById('input').addEventListener('paste', (e) => {
+    const w = state.windows.get(state.active);
+    const files = [...(e.clipboardData?.files || [])];
+    if (w?.kind === 'dm' && files.length) { e.preventDefault(); files.forEach((f) => dm.sendFile(w, f)); }
+  });
+  const chatEl = document.querySelector('.chat');
+  chatEl.addEventListener('dragover', (e) => { if (state.windows.get(state.active)?.kind === 'dm') { e.preventDefault(); chatEl.classList.add('dragging'); } });
+  chatEl.addEventListener('dragleave', (e) => { if (!chatEl.contains(e.relatedTarget)) chatEl.classList.remove('dragging'); });
+  chatEl.addEventListener('drop', (e) => {
+    const w = state.windows.get(state.active);
+    chatEl.classList.remove('dragging');
+    if (w?.kind !== 'dm') return;
+    e.preventDefault();
+    [...e.dataTransfer.files].forEach((f) => dm.sendFile(w, f));
+  });
+  sys('status', `Conectado como <b>${esc(state.nick)}</b>${state.registered ? ' (registrado)' : ' (invitado)'}. Las conversaciones no se guardan. Haz doble clic en un nick para hablar en privado.`, 'info');
+  dm.init();
   renderChanList();
   trackLobby();
 }
@@ -517,7 +584,7 @@ function bindComposer() {
     actionMode = on;
     actionBtn.classList.toggle('on', on);
     const w = state.windows.get(state.active);
-    input.placeholder = on ? `Describe una acción: * ${state.nick} …` : w && w.key !== 'status' ? `Mensaje en ${w.name}` : 'Elige un canal para hablar';
+    input.placeholder = on ? `Describe una acción: * ${state.nick} …` : w?.kind === 'dm' ? `Mensaje privado para ${w.peer.nick}` : w && w.key !== 'status' ? `Mensaje en ${w.name}` : 'Elige un canal para hablar';
   };
   actionBtn.onclick = () => { setAction(!actionMode); input.focus(); };
   document.getElementById('input-form').onsubmit = (e) => {
@@ -634,7 +701,15 @@ function renderChanList() {
   const nav = document.getElementById('nav-browse');
   if (!nav) return;
   nav.innerHTML = `<button class="chan ${state.active === 'status' ? 'active' : ''}">${icon('compass')}<span class="chan-name">Explorar canales</span></button>`;
-  const joined = [...state.windows.values()].filter((w) => w.key !== 'status');
+  const joined = [...state.windows.values()].filter((w) => w.key !== 'status' && w.kind !== 'dm');
+  const dms = [...state.windows.values()].filter((w) => w.kind === 'dm');
+  document.getElementById('dm-label').classList.toggle('hidden', !dms.length);
+  document.getElementById('dm-list').innerHTML = dms.map((w) => {
+    const badge = w.unread ? `<span class="badge mention">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
+    return `<button data-win="${esc(w.key)}" class="chan dm ${w.key === state.active ? 'active' : ''} ${w.unread ? 'unread' : ''}" title="${esc(dm.statusText(w))}">
+      <span class="dm-dot ${w.status}"></span>${avatar(w.peer.nick)}<span class="chan-name">${esc(w.peer.nick)}</span>${w.call ? `<span class="role admin">${icon('phone')}</span>` : ''}${badge}
+      <span class="part" data-part title="Cerrar conversación">${icon('x')}</span></button>`;
+  }).join('');
   document.getElementById('chan-list').innerHTML = joined.map((w) => {
     const badge = w.unread ? `<span class="badge ${w.mention ? 'mention' : ''}">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
     return `<button data-win="${esc(w.key)}" class="chan ${w.key === state.active ? 'active' : ''} ${w.unread ? 'unread' : ''}">
@@ -726,9 +801,15 @@ function activate(key) {
   state.active = key;
   w.unread = 0; w.mention = false;
   const log = document.getElementById('log');
+  const isDm = w.kind === 'dm';
+  document.getElementById('app').classList.toggle('in-dm', isDm);
+  ['call-audio', 'call-video'].forEach((id) => document.getElementById(id).classList.toggle('hidden', !isDm));
   if (key === 'status') {
     log.innerHTML = browserHtml() + w.lines.join('');
     log.scrollTop = 0;
+  } else if (isDm) {
+    log.innerHTML = w.lines.join('');
+    log.scrollTop = log.scrollHeight;
   } else {
     log.innerHTML = w.lines.join('') || '<div class="empty">Aún no hay mensajes. ¡Rompe el hielo!</div>';
     log.scrollTop = log.scrollHeight;
@@ -737,8 +818,11 @@ function activate(key) {
   document.getElementById('chan-menu').classList.toggle('hidden', key === 'status');
   state.setActionMode?.(false);
   document.getElementById('input-form').classList.toggle('hidden', key === 'status');
-  history.replaceState(null, '', key === 'status' ? location.pathname : '#' + w.name.slice(1));
-  renderTopic(); renderMembers(); renderChanList(); updateTitle();
+  const input = document.getElementById('input');
+  input.disabled = false;
+  if (!isDm) history.replaceState(null, '', key === 'status' ? location.pathname : '#' + w.name.slice(1));
+  if (isDm) dm.onActivate(w); else renderTopic();
+  renderMembers(); renderChanList(); updateTitle();
   if (key !== 'status' && matchMedia('(pointer:fine)').matches) document.getElementById('input').focus();
 }
 function renderTopic() {
@@ -753,7 +837,7 @@ function renderMembers() {
   const w = state.windows.get(state.active);
   const el = document.getElementById('members');
   const btn = document.getElementById('toggle-members');
-  const isStatus = w.key === 'status';
+  const isStatus = w.key === 'status' || w.kind === 'dm';
   el.classList.toggle('hidden', isStatus);
   btn.classList.toggle('hidden', isStatus);
   if (isStatus) return;
@@ -851,6 +935,7 @@ let lastSend = 0;
 function sendMessage(body, kind = 'msg') {
   const w = state.windows.get(state.active);
   if (!w || w.key === 'status') return;
+  if (w.kind === 'dm') return dm.sendText(w, body.slice(0, 4000), kind);
   if (Date.now() - lastSend < 250) return toast('Más despacio: espera un momento entre mensajes.');
   lastSend = Date.now();
   const m = { from: state.clientId, nick: state.nick, reg: state.registered, kind, body: body.slice(0, MAX_MSG), ts: Date.now() };
@@ -971,6 +1056,7 @@ function memberMenu(anchor, cid) {
   const p = w?.people.get(cid);
   if (!p) return;
   const items = [];
+  if (!p.me) items.push({ label: 'Mensaje privado', hint: 'También con doble clic en el nick', icon: 'message', onClick: () => openPrivate(p.cid) });
   if (!p.me) items.push({ label: 'Mencionar', icon: 'at', onClick: () => { const i = document.getElementById('input'); i.value = (i.value ? i.value.replace(/\s*$/, ' ') : '') + p.nick + (i.value ? ' ' : ': '); i.focus(); document.getElementById('app').classList.remove('members-open'); } });
   if (iAmAdmin(w) && !p.me) {
     if (!personIsAdmin(w, p)) {
@@ -989,6 +1075,17 @@ function memberMenu(anchor, cid) {
 function channelMenu(anchor) {
   const w = state.windows.get(state.active);
   if (!w || w.key === 'status') return;
+  if (w.kind === 'dm') {
+    const open = w.status === 'open';
+    return openMenu(anchor, [
+      { label: 'Llamada de voz', icon: 'phone', disabled: !open || !!w.call, onClick: () => dm.startCall(w, false) },
+      { label: 'Videollamada', icon: 'video', disabled: !open || !!w.call, onClick: () => dm.startCall(w, true) },
+      { label: 'Enviar archivo', icon: 'clip', disabled: !open, onClick: () => document.getElementById('file-input').click() },
+      { label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } },
+      '-',
+      { label: 'Cerrar conversación', icon: 'x', danger: true, onClick: () => dm.closeWindow(w) },
+    ], { title: `${avatar(w.peer.nick)}<span><b>${esc(w.peer.nick)}</b><small>${esc(dm.statusText(w))}</small></span>` });
+  }
   const items = [];
   if (iAmPermAdmin(w)) items.push({ label: 'Editar tema', icon: 'edit', onClick: () => editTopic(w) });
   items.push({ label: 'Ver administradores', icon: 'shield', onClick: () => adminsDialog(w) });
@@ -1028,8 +1125,9 @@ async function changeNickDialog() {
   state.nick = nick;
   updateMe();
   trackLobby();
+  dm.onNickChange(nick);
   for (const w of state.windows.values()) {
-    if (!w.rt) continue;
+    if (!w.rt || w.kind === 'dm') continue;
     w.rt.track(myPresence(w));
     w.rt.send({ type: 'broadcast', event: 'msg', payload: { from: state.clientId, nick, reg: state.registered, kind: 'action', body: `ahora se llama ${nick} (antes ${old})`, ts: Date.now() } });
     sys(w.key, `Ahora eres <b>${esc(nick)}</b>`, 'info');
@@ -1038,10 +1136,46 @@ async function changeNickDialog() {
 
 async function quitChat() {
   closeOverlays();
-  for (const w of state.windows.values()) if (w.rt) await supabase.removeChannel(w.rt);
+  dm.closeAll();
+  for (const w of state.windows.values()) if (w.rt && w.kind !== 'dm') await supabase.removeChannel(w.rt);
   state.windows.clear();
   state.nick = null;
   state.lobby.untrack();
   history.replaceState(null, '', location.pathname);
   renderHome();
+}
+
+/* ---------- Sonidos (generados, sin archivos) ---------- */
+let audioCtx;
+function beep(freqs = [880, 1320], dur = 0.12, vol = 0.08) {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    freqs.forEach((f, i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.frequency.value = f;
+      const t = audioCtx.currentTime + i * dur;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + dur + 0.02);
+    });
+  } catch { /* sin audio */ }
+}
+function loopTone(kind) {
+  const play = () => (kind === 'ring' ? beep([660, 880, 660, 880], 0.18, 0.12) : beep([440, 480], 0.6, 0.05));
+  play();
+  const t = setInterval(play, kind === 'ring' ? 2200 : 3000);
+  return () => clearInterval(t);
+}
+
+/* ---------- Privados ---------- */
+const dm = createDM({
+  state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
+  sys, addHtml, activate: (k) => activate(k), renderChanList: () => renderChanList(), updateTitle: () => updateTitle(),
+});
+function openPrivate(cid) {
+  const w = state.windows.get(state.active);
+  const p = w?.people?.get(cid);
+  if (!p || p.me) return;
+  document.getElementById('app').classList.remove('members-open');
+  dm.requestPrivate({ cid: p.cid, nick: p.nick, reg: p.reg });
 }
