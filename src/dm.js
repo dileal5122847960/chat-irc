@@ -14,7 +14,11 @@ import { EMOJI, STICKERS, stickerSvg } from './emoji.js';
 import { t, LANGS, getLang, translatedFrom } from './i18n.js';
 import { translate } from './translate.js';
 
-const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo
+const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo (conexión directa)
+const MAX_FILE_RELAY = 5 * 1024 * 1024; // 5 MB por archivo (plan B a través del servidor)
+const RELAY_CHUNK = 48 * 1024;
+const b64enc = (buf) => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+const b64dec = (str) => { const s = atob(str); const out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i); return out.buffer; };
 const CHUNK = 32 * 1024;
 const REQUEST_TIMEOUT = 60 * 1000;
 
@@ -173,14 +177,14 @@ export function createDM(ctx) {
   }
   function statusText(w) {
     return {
-      pending: 'Esperando respuesta…', connecting: 'Conectando…', open: 'en línea · cifrado de extremo a extremo',
+      pending: 'Esperando respuesta…', connecting: 'Conectando…', open: w.relay ? 'en línea · vía servidor (sin cifrado de extremo a extremo)' : 'en línea · cifrado de extremo a extremo',
       closed: 'Conversación cerrada', rejected: 'No disponible',
     }[w.status] || '';
   }
   function renderHeader(w) {
     document.getElementById('win-name').innerHTML = `${avatar(w.peer.nick)}<span class="dm-title-nick" style="${nickStyle(w.peer.nick)}">${esc(w.peer.nick)}</span>${w.peer.reg ? verified : ''}`;
-    document.getElementById('topic').innerHTML = `<span class="dm-status ${w.status}">${w.status === 'open' ? icon('lock') : ''}${esc(statusText(w))}</span>`;
-    const open = w.status === 'open';
+    document.getElementById('topic').innerHTML = `<span class="dm-status ${w.status} ${w.relay ? 'relay' : ''}">${w.status === 'open' ? icon(w.relay ? 'unlock' : 'lock') : ''}${esc(statusText(w))}</span>`;
+    const open = w.status === 'open' && !w.relay; // las llamadas necesitan conexión directa
     document.getElementById('call-audio').disabled = !open || !!w.call;
     document.getElementById('call-video').disabled = !open || !!w.call;
   }
@@ -207,19 +211,21 @@ export function createDM(ctx) {
     const rt = supabase.channel('dm:' + w.id, { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
     w.rt = rt;
     rt.on('broadcast', { event: 'sig' }, ({ payload }) => payload && payload.from === w.peer.cid && handleSignal(w, payload))
+      .on('broadcast', { event: 'relay' }, ({ payload: m }) => {
+        if (!m || m.from !== w.peer.cid) return;
+        if (m.t === 'relay-on') return enableRelay(w, false);
+        if (!w.relay) enableRelay(w, false);
+        if (m.t === 'chunk' && typeof m.d === 'string') return onChunk(w, b64dec(m.d));
+        onData(w, m);
+      })
       .on('presence', { event: 'leave' }, ({ key }) => { if (key === w.peer.cid && w.status === 'open') peerGone(w, `<b>${esc(w.peer.nick)}</b> se desconectó.`); });
     await new Promise((resolve) => rt.subscribe(async (s) => {
       if (s === 'SUBSCRIBED') { await rt.track({ nick: state.nick }); resolve(); }
       if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') resolve();
     }));
     createPeer(w);
-    // Si en 25 s no hay conexión directa, se avisa en vez de quedarse esperando
-    w.connectTimer = setTimeout(() => {
-      if (w.status !== 'connecting') return;
-      sysLine(w, 'No se pudo establecer la conexión directa. Cierra esta conversación y vuelve a intentarlo con doble clic en el nick.', 'err');
-      teardown(w);
-      setStatus(w, 'closed');
-    }, 25000);
+    // Si en 15 s no hay conexión directa, se pasa al plan B (a través del servidor)
+    w.connectTimer = setTimeout(() => { if (w.status === 'connecting') enableRelay(w, true); }, 15000);
   }
   const signal = (w, data) => {
     (w.dbg ||= []).push('tx:' + (data.description?.type || 'ice'));
@@ -238,10 +244,7 @@ export function createDM(ctx) {
       } catch (e) { console.warn(e); } finally { w.makingOffer = false; }
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') {
-        sysLine(w, 'No se pudo establecer la conexión directa. Puede que vuestra red la bloquee.', 'err');
-        setStatus(w, 'closed');
-      }
+      if (pc.connectionState === 'failed' && w.status !== 'closed') enableRelay(w, true);
     };
     pc.ontrack = ({ track, transceiver }) => {
       if (track.kind === 'audio') w.audioTx ||= transceiver; else w.videoTx ||= transceiver;
@@ -296,7 +299,12 @@ export function createDM(ctx) {
       setStatus(w, 'open');
       sysLine(w, `Conexión directa con <b>${esc(w.peer.nick)}</b>. Los mensajes, archivos y llamadas van cifrados de extremo a extremo y no se guardan en ningún sitio.`, 'join');
     };
-    dc.onclose = () => { if (w.status === 'open') peerGone(w, `<b>${esc(w.peer.nick)}</b> cerró la conversación.`); };
+    dc.onclose = () => {
+      if (w.status !== 'open' || w.relay) return;
+      // Si la conexión directa se cae pero la otra persona sigue aquí, se continúa por el servidor
+      if (w.rt?.presenceState()[w.peer.cid]) enableRelay(w, true);
+      else peerGone(w, `<b>${esc(w.peer.nick)}</b> cerró la conversación.`);
+    };
     dc.onmessage = (e) => {
       if (typeof e.data === 'string') {
         let m; try { m = JSON.parse(e.data); } catch { return; }
@@ -304,7 +312,24 @@ export function createDM(ctx) {
       } else onChunk(w, e.data);
     };
   }
-  const sendJSON = (w, obj) => { if (w.dc?.readyState === 'open') w.dc.send(JSON.stringify(obj)); };
+  const sendJSON = (w, obj) => {
+    if (w.relay) return w.rt?.send({ type: 'broadcast', event: 'relay', payload: { ...obj, from: state.clientId } });
+    if (w.dc?.readyState === 'open') w.dc.send(JSON.stringify(obj));
+  };
+  /**
+   * Plan B: si no hay conexión directa (redes que la bloquean y sin TURN disponible), el
+   * privado sigue funcionando a través del servidor de tiempo real. Sin cifrado de extremo a
+   * extremo (sí cifrado en tránsito), sin guardar nada y sin llamadas.
+   */
+  function enableRelay(w, announce) {
+    if (w.relay || w.status === 'closed' || w.status === 'rejected' || !w.rt) return;
+    w.relay = true;
+    clearTimeout(w.connectTimer);
+    if (announce) w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'relay-on', from: state.clientId } });
+    try { w.dc?.close(); } catch { /* nada */ }
+    setStatus(w, 'open');
+    sysLine(w, `${icon('unlock')} ` + esc(t('No fue posible la conexión directa entre vuestras redes. La conversación continúa a través del servidor: los mensajes no se guardan, pero no van cifrados de extremo a extremo. Las llamadas no están disponibles en este modo.')), 'err');
+  }
 
   function onData(w, m) {
     switch (m.t) {
@@ -325,7 +350,7 @@ export function createDM(ctx) {
         return;
       }
       case 'file-start': {
-        if (!(m.size > 0 && m.size <= MAX_FILE)) return;
+        if (!(m.size > 0 && m.size <= (w.relay ? MAX_FILE_RELAY : MAX_FILE))) return;
         const f = { fid: safeId(m.fid), name: String(m.name || 'archivo').slice(0, 200), mime: String(m.mime || ''), size: m.size, kind: ['image', 'video', 'audio', 'file'].includes(m.kind) ? m.kind : 'file',
           voice: !!m.voice, duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
         w.incoming.set('current', f);
@@ -540,12 +565,26 @@ export function createDM(ctx) {
   function sendFile(w, file, extra = {}) {
     if (w.status !== 'open') return;
     if (file.size > MAX_FILE) return toast(`"${file.name}" supera el límite de 100 MB.`);
+    if (w.relay && file.size > MAX_FILE_RELAY) return toast(t('Sin conexión directa, el límite por archivo es de 5 MB.'));
     if (!file.size) return;
     const f = { fid: crypto.randomUUID(), name: file.name || 'archivo', mime: file.type || 'application/octet-stream', size: file.size, kind: extra.voice ? 'audio' : fileKind(file.type), ...extra };
     const local = { ...f };
     addMessage(w, { mid: f.fid, mine: true, kind: 'file', file: local, ts: Date.now() });
     // Los envíos van en fila: un archivo después de otro
     w.sendQueue = w.sendQueue.then(async () => {
+      if (w.relay) {
+        sendJSON(w, { t: 'file-start', ...f });
+        for (let off = 0; off < file.size; off += RELAY_CHUNK) {
+          if (!w.relay || !w.rt) return;
+          const buf = await file.slice(off, off + RELAY_CHUNK).arrayBuffer();
+          await w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'chunk', d: b64enc(buf), from: state.clientId } });
+          progress(f.fid, Math.min(1, (off + buf.byteLength) / file.size));
+          await new Promise((r) => setTimeout(r, 70)); // respeta el límite de mensajes por segundo
+        }
+        sendJSON(w, { t: 'file-end', fid: f.fid });
+        local.url = URL.createObjectURL(file);
+        return rerender(w, f.fid);
+      }
       const dc = w.dc;
       if (!dc || dc.readyState !== 'open') return;
       dc.send(JSON.stringify({ t: 'file-start', ...f }));
@@ -682,6 +721,7 @@ export function createDM(ctx) {
     }
   }
   async function startCall(w, video) {
+    if (w.relay) return toast(t('Las llamadas necesitan conexión directa, que vuestras redes no permiten ahora mismo.'));
     if (w.status !== 'open' || w.call) return;
     if (document.querySelector('.call-overlay')) return toast('Ya estás en una llamada.');
     let stream;
@@ -850,7 +890,7 @@ export function createDM(ctx) {
   function onNickChange(nick) { for (const w of dmWindows()) sendJSON(w, { t: 'nick', nick }); }
 
   // Diagnóstico (consola del navegador: __dmDebug())
-  window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
+  window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
     init, requestPrivate, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
