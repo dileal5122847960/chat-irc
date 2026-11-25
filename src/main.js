@@ -70,6 +70,10 @@ const I = {
   file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   message: '<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>',
+  smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><circle cx="9" cy="10" r=".8"/><circle cx="15" cy="10" r=".8"/>',
+  play: '<path d="M7 4v16l13-8z" fill="currentColor"/>',
+  pause: '<path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/>',
+  check2: '<path d="m2.5 12.5 4 4 10-10M11.5 16.5l1 0L22 6.5"/>',
 };
 const icon = (n, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 const verified = '<span class="verified" title="Usuario registrado">' + icon('check') + '</span>';
@@ -484,8 +488,10 @@ function renderClient() {
         <aside class="members" id="members"></aside>
       </div>
       <form class="composer" id="input-form">
+        <div class="picker hidden" id="picker"></div>
         <div class="input-wrap">
           <button type="button" class="icon-btn action-toggle" id="action-btn" title="Escribir como acción (* tu_nick hace algo)">${icon('sparkle')}</button>
+          <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
           <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
           <input id="input" autocomplete="off" spellcheck="true" maxlength="${MAX_MSG}" placeholder="Escribe un mensaje…">
           <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
@@ -493,7 +499,7 @@ function renderClient() {
         </div>
         <div class="rec-bar">
           <button type="button" class="icon-btn" id="rec-cancel" title="Descartar">${icon('trash')}</button>
-          <span class="rec-dot"></span><span id="rec-time">0:00</span><span class="rec-label">Grabando nota de voz…</span>
+          <span class="rec-dot"></span><span id="rec-time">0:00</span><canvas id="rec-wave"></canvas>
           <button type="button" class="send" id="rec-send" title="Enviar nota de voz">${icon('send')}</button>
         </div>
         <input type="file" id="file-input" multiple hidden>
@@ -592,10 +598,14 @@ function bindComposer() {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
+    input.dispatchEvent(new Event('input'));
+    document.getElementById('picker')?.classList.add('hidden');
     sendMessage(text, actionMode ? 'action' : 'msg');
     if (actionMode) setAction(false);
   };
   const hist = []; let hi = -1;
+  const wrap = input.closest('.input-wrap');
+  input.addEventListener('input', () => wrap.classList.toggle('has-text', input.value.trim().length > 0));
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && input.value.trim()) { hist.unshift(input.value); hi = -1; }
     if (e.key === 'ArrowUp' && hist.length) { hi = Math.min(hi + 1, hist.length - 1); input.value = hist[hi]; e.preventDefault(); }
@@ -642,24 +652,34 @@ function mentionsMe(m) {
   if (m.from === state.clientId) return false;
   return new RegExp(`(^|[^\\w])${state.nick.replace(/[^\w]/g, '\\$&')}([^\\w]|$)`, 'i').test(m.body);
 }
-function roleBadge(w, p) {
-  if (!p) return '';
-  if (isOwner(w.ch, p.uid)) return '<span class="role owner" title="Creador del canal">' + icon('crown') + '</span>';
-  if (personIsAdmin(w, p)) return `<span class="role admin" title="Administrador${p.tmp && !isPermAdmin(w.ch, p.uid) ? ' temporal' : ''}">${icon('shield')}</span>`;
-  return '';
+const CROWN_SVG = '<svg viewBox="0 0 24 16" aria-hidden="true"><path d="M2 14 1 3l6 4.5L12 1l5 6.5L23 3l-1 11z" stroke-linejoin="round"/><circle cx="1" cy="3" r="1.6"/><circle cx="12" cy="1.4" r="1.6"/><circle cx="23" cy="3" r="1.6"/></svg>';
+/** Rol de una persona en el canal: 'owner' (creador), 'admin' (permanente), 'tmp' (temporal) o ''. */
+function roleOf(w, p) {
+  if (!p || !w?.ch) return '';
+  if (isOwner(w.ch, p.uid)) return 'owner';
+  if (isPermAdmin(w.ch, p.uid)) return 'admin';
+  return p.tmp ? 'tmp' : '';
 }
+const ROLE_TITLE = { owner: 'Creador del canal', admin: 'Administrador', tmp: 'Administrador temporal' };
+/** Coronita sobre el avatar para identificar a los administradores. */
+function crown(role) { return role ? `<i class="crown ${role}" title="${ROLE_TITLE[role]}">${CROWN_SVG}</i>` : ''; }
+/** Avatar con coronita si es administrador. */
+function avatarWithRole(nick, role, extra = '') { return `<span class="av-wrap ${role ? 'crowned' : ''}">${crown(role)}${avatar(nick)}${extra}</span>`; }
+/** Versión pequeña en línea (para acciones y menús). */
+function roleBadge(w, p) { const r = roleOf(w, p); return r ? `<span class="role-inline ${r}" title="${ROLE_TITLE[r]}">${CROWN_SVG}</span>` : ''; }
 function formatMessage(w, m) {
   const mention = mentionsMe(m);
   const p = w.people.get(m.from);
-  const nickHtml = `<b class="nick" style="${nickStyle(m.nick)}">${esc(m.nick)}</b>${m.reg ? verified : ''}${roleBadge(w, p)}`;
+  const role = roleOf(w, p);
+  const nickHtml = `<b class="nick" style="${nickStyle(m.nick)}">${esc(m.nick)}</b>${m.reg ? verified : ''}`;
   if (m.kind === 'action') {
     w.last = null;
-    return `<div class="msg action ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body"><span class="star">*</span> ${nickHtml} ${linkify(m.body)}</div></div>`;
+    return `<div class="msg action ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body"><span class="star">*</span> ${nickHtml}${roleBadge(w, p)} ${linkify(m.body)}</div></div>`;
   }
   const grouped = w.last && w.last.from === m.from && w.last.nick === m.nick && m.ts - w.last.ts < 5 * 60 * 1000;
   w.last = { from: m.from, nick: m.nick, ts: m.ts };
   if (grouped) return `<div class="msg cont ${mention ? 'mention' : ''}"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body">${linkify(m.body)}</div></div>`;
-  return `<div class="msg first ${mention ? 'mention' : ''}"><span class="gutter">${avatar(m.nick)}</span><div class="msg-body"><div class="msg-head">${nickHtml}<time>${time(m.ts)}</time></div>${linkify(m.body)}</div></div>`;
+  return `<div class="msg first ${mention ? 'mention' : ''}"><span class="gutter">${avatarWithRole(m.nick, role)}</span><div class="msg-body"><div class="msg-head">${nickHtml}<time>${time(m.ts)}</time></div>${linkify(m.body)}</div></div>`;
 }
 function addHtml(key, html, { count = false, mention = false } = {}) {
   const w = state.windows.get(key);
@@ -844,7 +864,7 @@ function renderMembers() {
   const people = sortedPeople(w);
   const admins = people.filter((p) => personIsAdmin(w, p));
   const rest = people.filter((p) => !personIsAdmin(w, p));
-  const row = (p) => `<button class="member" data-cid="${esc(p.cid)}" title="Opciones para ${esc(p.nick)}"><span class="av-wrap">${avatar(p.nick)}<i class="dot on"></i></span><span class="member-nick" style="${nickStyle(p.nick)}">${esc(p.nick)}</span>${p.reg ? verified : ''}${roleBadge(w, p)}${p.me ? '<small>tú</small>' : ''}</button>`;
+  const row = (p) => `<button class="member" data-cid="${esc(p.cid)}" title="Opciones para ${esc(p.nick)}">${avatarWithRole(p.nick, roleOf(w, p), '<i class="dot on"></i>')}<span class="member-nick" style="${nickStyle(p.nick)}">${esc(p.nick)}</span>${p.reg ? verified : ''}${p.me ? '<small>tú</small>' : ''}</button>`;
   document.getElementById('member-count').textContent = people.length;
   el.innerHTML = (admins.length ? `<div class="side-label">Administradores — ${admins.length}</div>${admins.map(row).join('')}` : '') +
     `<div class="side-label ${admins.length ? 'spaced' : ''}">En línea — ${rest.length}</div>${rest.map(row).join('')}`;
@@ -899,10 +919,13 @@ async function joinChannel(name) {
     if (state.active === key) renderMembers();
   })
     .on('presence', { event: 'join' }, ({ key: cid, newPresences }) => {
-      if (cid !== state.clientId && w.ready && newPresences[0]?.nick) sys(key, `<b>${esc(newPresences[0].nick)}</b> ha entrado`, 'join');
+      // Una actualización de estado (nick, cargo) llega como salida + entrada: no se anuncia
+      if (cid === state.clientId || !w.ready || !newPresences[0]?.nick || w.people.has(cid)) return;
+      sys(key, `<b>${esc(newPresences[0].nick)}</b> ha entrado`, 'join');
     })
     .on('presence', { event: 'leave' }, ({ key: cid, leftPresences }) => {
-      if (cid !== state.clientId && leftPresences[0]?.nick) sys(key, `<b>${esc(leftPresences[0].nick)}</b> ha salido`, 'part');
+      if (cid === state.clientId || !leftPresences[0]?.nick) return;
+      setTimeout(() => { if (!rt.presenceState()[cid]) sys(key, `<b>${esc(leftPresences[0].nick)}</b> ha salido`, 'part'); }, 600);
     })
     .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
@@ -1070,7 +1093,7 @@ function memberMenu(anchor, cid) {
   if (p.me && iAmAdmin(w) && !iAmOwner(w)) items.push({ label: 'Dejar de ser administrador', icon: 'shield-off', onClick: () => revokeAdmin(w, p) });
   if (p.me) items.push({ label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog });
   const role = isOwner(w.ch, p.uid) ? 'Creador del canal' : personIsAdmin(w, p) ? (isPermAdmin(w.ch, p.uid) ? 'Administrador' : 'Administrador temporal') : p.reg ? 'Usuario registrado' : 'Invitado';
-  openMenu(anchor, items.length ? items : [{ label: 'Sin acciones disponibles', disabled: true }], { title: `${avatar(p.nick)}<span><b>${esc(p.nick)}</b><small>${role}</small></span>` });
+  openMenu(anchor, items.length ? items : [{ label: 'Sin acciones disponibles', disabled: true }], { title: `${avatarWithRole(p.nick, roleOf(w, p))}<span><b>${esc(p.nick)}</b><small>${role}</small></span>` });
 }
 function channelMenu(anchor) {
   const w = state.windows.get(state.active);

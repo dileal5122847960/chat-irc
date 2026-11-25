@@ -10,6 +10,8 @@
  *   pasar por la base de datos ni guardarse en ningún servidor.
  */
 
+import { EMOJI, STICKERS, stickerSvg } from './emoji.js';
+
 const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo
 const CHUNK = 32 * 1024;
 const REQUEST_TIMEOUT = 60 * 1000;
@@ -131,6 +133,7 @@ export function createDM(ctx) {
       lines: [], unread: 0, mention: false, last: null,
       rt: null, pc: null, dc: null, polite: role === 'callee', makingOffer: false, ignoreOffer: false,
       sendQueue: Promise.resolve(), incoming: new Map(), call: null,
+      msgs: new Map(), unreadMids: [], lastBubble: null,
     };
     state.windows.set(w.key, w);
     ctx.renderChanList();
@@ -143,7 +146,7 @@ export function createDM(ctx) {
   }
   function statusText(w) {
     return {
-      pending: 'Esperando respuesta…', connecting: 'Conectando…', open: 'Conexión directa cifrada de extremo a extremo',
+      pending: 'Esperando respuesta…', connecting: 'Conectando…', open: 'en línea · cifrado de extremo a extremo',
       closed: 'Conversación cerrada', rejected: 'No disponible',
     }[w.status] || '';
   }
@@ -161,11 +164,13 @@ export function createDM(ctx) {
     input.placeholder = open ? `Mensaje privado para ${w.peer.nick}` : statusText(w);
     document.getElementById('attach-btn').disabled = !open;
     document.getElementById('mic-btn').disabled = !open;
+    document.getElementById('emoji-btn').disabled = !open;
   }
   /** Llamado por la app al mostrar esta ventana. */
   function onActivate(w) {
     renderHeader(w);
     syncComposer(w);
+    markRead(w);
   }
   function sysLine(w, html, kind = 'info') { ctx.sys(w.key, html, kind); }
 
@@ -188,7 +193,10 @@ export function createDM(ctx) {
       setStatus(w, 'closed');
     }, 25000);
   }
-  const signal = (w, data) => w.rt?.send({ type: 'broadcast', event: 'sig', payload: { from: state.clientId, ...data } });
+  const signal = (w, data) => {
+    (w.dbg ||= []).push('tx:' + (data.description?.type || 'ice'));
+    return w.rt?.send({ type: 'broadcast', event: 'sig', payload: { from: state.clientId, ...data } }).then((r) => { if (r !== 'ok') w.dbg.push('tx-fail:' + r); });
+  };
 
   function createPeer(w) {
     const pc = new RTCPeerConnection({ iceServers: iceServers() });
@@ -222,6 +230,7 @@ export function createDM(ctx) {
     else pc.ondatachannel = (e) => setupDataChannel(w, e.channel);
   }
   async function handleSignal(w, { description, candidate }) {
+    (w.dbg ||= []).push('rx:' + (description?.type || 'ice') + (w.pc ? '' : '(sin-pc)'));
     const pc = w.pc;
     if (!pc) return;
     try {
@@ -230,6 +239,7 @@ export function createDM(ctx) {
         w.ignoreOffer = !w.polite && collision;
         if (w.ignoreOffer) return;
         await pc.setRemoteDescription(description);
+        for (const c of (w.pendingIce || []).splice(0)) pc.addIceCandidate(c).catch(() => {});
         if (description.type === 'offer') {
           for (const t of pc.getTransceivers()) {
             if (t.direction === 'recvonly') t.direction = 'sendrecv';
@@ -240,6 +250,9 @@ export function createDM(ctx) {
           signal(w, { description: pc.localDescription });
         }
       } else if (candidate) {
+        // La señalización puede llegar desordenada: si aún no hay descripción remota,
+        // se guarda el candidato y se aplica después.
+        if (!pc.remoteDescription) { (w.pendingIce ||= []).push(candidate); return; }
         try { await pc.addIceCandidate(candidate); } catch (e) { if (!w.ignoreOffer) console.warn(e); }
       }
     } catch (e) { console.warn('señalización', e); }
@@ -267,12 +280,24 @@ export function createDM(ctx) {
 
   function onData(w, m) {
     switch (m.t) {
-      case 'text': return addMessage(w, { mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now() });
+      case 'text': {
+        const msg = { mid: safeId(m.mid), mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now() };
+        addMessage(w, msg); receipt(w, msg.mid);
+        return;
+      }
+      case 'sticker': {
+        if (!STICKERS.includes(m.id)) return;
+        const msg = { mid: safeId(m.mid), mine: false, kind: 'sticker', sticker: m.id, ts: Date.now() };
+        addMessage(w, msg); receipt(w, msg.mid);
+        return;
+      }
       case 'file-start': {
         if (!(m.size > 0 && m.size <= MAX_FILE)) return;
-        const f = { ...m, chunks: [], received: 0, mine: false };
+        const f = { fid: safeId(m.fid), name: String(m.name || 'archivo').slice(0, 200), mime: String(m.mime || ''), size: m.size, kind: ['image', 'video', 'audio', 'file'].includes(m.kind) ? m.kind : 'file',
+          voice: !!m.voice, duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
         w.incoming.set('current', f);
-        addMessage(w, { mine: false, kind: 'file', file: f, ts: Date.now() });
+        const msg = { mid: f.fid, mine: false, kind: 'file', file: f, ts: Date.now() };
+        addMessage(w, msg); receipt(w, msg.mid);
         return;
       }
       case 'file-end': {
@@ -282,9 +307,11 @@ export function createDM(ctx) {
         f.blob = new Blob(f.chunks, { type: f.mime || 'application/octet-stream' });
         f.chunks = null;
         f.url = URL.createObjectURL(f.blob);
-        updateFile(w, f);
+        rerender(w, f.fid);
         return;
       }
+      case 'ack': return setTick(w, m.mid, 'delivered');
+      case 'read': (m.mids || []).forEach((id) => setTick(w, id, 'read')); return;
       case 'nick': {
         const old = w.peer.nick;
         w.peer.nick = w.name = String(m.nick || old).slice(0, 20);
@@ -295,39 +322,83 @@ export function createDM(ctx) {
       }
       case 'call': return onCallOffer(w, !!m.video);
       case 'call-accept': return onCallAccepted(w);
-      case 'call-reject': if (w.call) { sysLine(w, `<b>${esc(w.peer.nick)}</b> rechazó la llamada.`, 'err'); endCall(w, false); } return;
-      case 'hangup': if (w.call) { sysLine(w, 'Llamada finalizada.'); endCall(w, false); } return;
+      case 'call-reject': if (w.call) { sysLine(w, `📞 <b>${esc(w.peer.nick)}</b> rechazó la llamada.`, 'err'); endCall(w, false); } return;
+      case 'hangup': if (w.call) { sysLine(w, w.call.startedAt ? `📞 Llamada finalizada (${fmtDur((Date.now() - w.call.startedAt) / 1000)}).` : '📞 Llamada cancelada.'); endCall(w, false); } return;
       case 'bye': return peerGone(w, `<b>${esc(w.peer.nick)}</b> cerró la conversación.`);
       default:
     }
   }
+  const safeId = (v) => String(v || crypto.randomUUID()).replace(/[^\w-]/g, '').slice(0, 40);
   function onChunk(w, buf) {
     const f = w.incoming.get('current');
     if (!f) return;
     f.chunks.push(buf);
     f.received += buf.byteLength;
     if (f.received > f.size) { w.incoming.delete('current'); return; }
-    progress(f, f.received / f.size);
+    progress(f.fid, f.received / f.size);
   }
 
-  /* ---------------- Mensajes ---------------- */
+  /* ---------------- Confirmaciones de entrega y lectura (✓ ✓✓) ---------------- */
+  function receipt(w, mid) {
+    sendJSON(w, { t: 'ack', mid });
+    w.unreadMids.push(mid);
+    markRead(w);
+  }
+  /** Si el privado está a la vista, avisa al otro de que se han leído sus mensajes. */
+  function markRead(w) {
+    if (!w.unreadMids.length || state.active !== w.key || document.hidden) return;
+    sendJSON(w, { t: 'read', mids: w.unreadMids.splice(0) });
+  }
+  document.addEventListener('visibilitychange', () => { const w = state.windows.get(state.active); if (w?.kind === 'dm') markRead(w); });
+  function setTick(w, mid, st) {
+    const m = w.msgs.get(mid);
+    if (!m || !m.mine) return;
+    const order = { sent: 0, delivered: 1, read: 2 };
+    if (order[st] <= order[m.tick || 'sent']) return;
+    m.tick = st;
+    rerender(w, mid);
+  }
+  const tickHtml = (m) => `<span class="tick ${m.tick || 'sent'}" title="${{ sent: 'Enviado', delivered: 'Entregado', read: 'Leído' }[m.tick || 'sent']}">${icon(m.tick === 'delivered' || m.tick === 'read' ? 'check2' : 'check')}</span>`;
+
+  /* ---------------- Burbujas ---------------- */
   function addMessage(w, m) {
-    const nick = m.mine ? state.nick : w.peer.nick;
-    const reg = m.mine ? state.registered : w.peer.reg;
-    const head = `<b class="nick" style="${nickStyle(nick)}">${esc(nick)}</b>${reg ? verified : ''}`;
-    let body;
-    if (m.kind === 'action') {
-      w.last = null;
-      return ctx.addHtml(w.key, `<div class="msg action"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body"><span class="star">*</span> ${head} ${linkify(m.text)}</div></div>`, { count: !m.mine });
+    m.mid ||= crypto.randomUUID();
+    if (m.mine) m.tick = 'sent';
+    m.first = !w.lastBubble || w.lastBubble.mine !== m.mine || m.ts - w.lastBubble.ts > 5 * 60 * 1000;
+    w.lastBubble = { mine: m.mine, ts: m.ts };
+    w.msgs.set(m.mid, m);
+    w.last = null;
+    ctx.addHtml(w.key, bubbleHtml(w, m), { count: !m.mine });
+  }
+  function bubbleHtml(w, m) {
+    const meta = `<span class="bmeta">${time(m.ts)}${m.mine ? tickHtml(m) : ''}</span>`;
+    let cls = '', body;
+    if (m.kind === 'text') {
+      const onlyEmoji = /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,12}$/u.test(m.text) && !/^[\d#*\s]+$/.test(m.text) && [...new Intl.Segmenter().segment(m.text.trim())].length <= 3;
+      if (onlyEmoji) { cls = 'emoji-only'; body = `<div class="big-emoji">${esc(m.text)}</div>`; }
+      else body = `<div class="btext">${linkify(m.text)}<span class="meta-spacer"></span></div>`;
+    } else if (m.kind === 'action') {
+      body = `<div class="btext"><i>* ${esc(m.mine ? state.nick : w.peer.nick)} ${linkify(m.text)}</i><span class="meta-spacer"></span></div>`;
+    } else if (m.kind === 'sticker') {
+      cls = 'sticker-msg'; body = `<div class="sticker">${stickerSvg(m.sticker)}</div>`;
+    } else {
+      const f = m.file;
+      if (f.kind === 'image' || f.kind === 'video') cls = 'media-msg';
+      if (f.voice || f.kind === 'audio') cls = 'voice-msg';
+      body = fileHtml(w, m, f);
     }
-    if (m.kind === 'text') body = linkify(m.text);
-    else body = fileHtml(m.file);
-    const grouped = w.last && w.last.mine === m.mine && m.ts - w.last.ts < 5 * 60 * 1000 && m.kind === 'text' && w.last.kind === 'text';
-    w.last = { mine: m.mine, ts: m.ts, kind: m.kind };
-    const html = grouped
-      ? `<div class="msg cont"><span class="gutter"><time>${time(m.ts)}</time></span><div class="msg-body">${body}</div></div>`
-      : `<div class="msg first"><span class="gutter">${avatar(nick)}</span><div class="msg-body"><div class="msg-head">${head}<time>${time(m.ts)}</time></div>${body}</div></div>`;
-    ctx.addHtml(w.key, html, { count: !m.mine });
+    return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls}" id="m-${m.mid}"><div class="bubble">${body}${meta}</div></div>`;
+  }
+  /** Vuelve a pintar un mensaje (al terminar una transferencia o cambiar la marca de lectura). */
+  function rerender(w, mid) {
+    const m = w.msgs.get(mid);
+    if (!m) return;
+    const html = bubbleHtml(w, m);
+    const marker = `id="m-${mid}"`;
+    const i = w.lines.findIndex((l) => l.includes(marker));
+    if (i >= 0) w.lines[i] = html;
+    const el = document.getElementById('m-' + mid);
+    if (el) el.outerHTML = html;
   }
   function fileKind(mime) {
     if (/^image\//.test(mime)) return 'image';
@@ -335,49 +406,105 @@ export function createDM(ctx) {
     if (/^audio\//.test(mime)) return 'audio';
     return 'file';
   }
-  function fileHtml(f) {
-    const id = 'f-' + f.fid;
-    if (!f.url) {
-      return `<div class="att loading" id="${id}"><span class="att-ico">${icon(f.kind === 'audio' ? 'mic' : f.kind === 'image' ? 'image' : f.kind === 'video' ? 'video' : 'file')}</span>
-        <span class="att-info"><b>${esc(f.voice ? 'Nota de voz' : f.name)}</b><small>${fmtSize(f.size)} · <span class="att-pct">0%</span></small><i class="bar"><i></i></i></span></div>`;
+  const ring = (fid) => `<span class="progress-ring" data-progress="${fid}" style="--p:0"><span>0%</span></span>`;
+  function fileHtml(w, m, f) {
+    const loading = !f.url;
+    if (f.voice || f.kind === 'audio') {
+      const bars = (f.wave || Array(36).fill(0.3)).map((v) => `<i style="height:${Math.max(12, Math.round(v * 100))}%"></i>`).join('');
+      const nick = m.mine ? state.nick : w.peer.nick;
+      return `<div class="voice" ${loading ? '' : `data-src="${f.url}"`} data-dur="${f.duration || 0}">
+        <span class="voice-av">${avatar(nick)}<i class="mic-mini">${icon('mic')}</i></span>
+        <button class="voice-play" aria-label="Reproducir" ${loading ? 'disabled' : ''}>${loading ? ring(f.fid) : icon('play')}</button>
+        <span class="voice-track"><span class="wave">${bars}</span><small class="voice-time">${fmtDur(f.duration)}</small></span>
+        <button class="voice-speed" title="Velocidad">1×</button></div>`;
     }
-    return readyHtml(f, id);
+    if (f.kind === 'image' || f.kind === 'video') {
+      const inner = loading ? `<div class="media-ph">${icon(f.kind === 'image' ? 'image' : 'video')}${ring(f.fid)}</div>`
+        : f.kind === 'image' ? `<img src="${f.url}" alt="${esc(f.name)}" data-zoom>` : `<video src="${f.url}" controls playsinline preload="metadata"></video>`;
+      return `<div class="bmedia">${inner}</div>`;
+    }
+    const ext = (f.name.split('.').pop() || '').slice(0, 4).toUpperCase();
+    const tag = loading ? 'div' : 'a';
+    return `<${tag} class="doc" ${loading ? '' : `href="${f.url}" download="${esc(f.name)}"`}><span class="doc-ico">${esc(ext) || icon('file')}</span>
+      <span class="doc-info"><b>${esc(f.name)}</b><small>${fmtSize(f.size)}${ext ? ' · ' + esc(ext) : ''}</small></span>
+      <span class="doc-dl">${loading ? ring(f.fid) : icon('download')}</span></${tag}>`;
   }
-  function readyHtml(f, id) {
-    if (f.kind === 'image') return `<a class="att-media" id="${id}" href="${f.url}" target="_blank" rel="noopener"><img src="${f.url}" alt="${esc(f.name)}"></a>`;
-    if (f.kind === 'video') return `<div class="att-media" id="${id}"><video src="${f.url}" controls playsinline preload="metadata"></video></div>`;
-    if (f.kind === 'audio') return `<div class="att-voice" id="${id}">${icon('mic')}<audio src="${f.url}" controls preload="metadata"></audio>${f.duration ? `<small>${fmtDur(f.duration)}</small>` : ''}</div>`;
-    return `<a class="att" id="${id}" href="${f.url}" download="${esc(f.name)}"><span class="att-ico">${icon('file')}</span><span class="att-info"><b>${esc(f.name)}</b><small>${fmtSize(f.size)} · Descargar</small></span><span class="att-dl">${icon('download')}</span></a>`;
-  }
-  function progress(f, p) {
-    const el = document.getElementById('f-' + f.fid);
-    if (!el) return;
+  function progress(fid, p) {
     const pct = Math.min(100, Math.round(p * 100));
-    el.querySelector('.att-pct') && (el.querySelector('.att-pct').textContent = pct + '%');
-    el.querySelector('.bar i') && (el.querySelector('.bar i').style.width = pct + '%');
+    document.querySelectorAll(`[data-progress="${CSS.escape(fid)}"]`).forEach((el) => {
+      el.style.setProperty('--p', pct);
+      el.firstElementChild.textContent = pct + '%';
+    });
   }
-  function updateFile(w, f) {
-    const id = 'f-' + f.fid;
-    const html = readyHtml(f, id);
-    // Actualiza la copia guardada de la ventana y el DOM si está visible
-    w.lines = w.lines.map((l) => (l.includes(`id="${id}"`) ? l.replace(new RegExp(`<div class="att loading" id="${id}">[\\s\\S]*?</i></i></span></div>`), html) : l));
-    const el = document.getElementById(id);
-    if (el) el.outerHTML = html;
+
+  /* Reproductor de notas de voz, visor de fotos */
+  let playing = null;
+  document.addEventListener('click', (e) => {
+    if (!document.querySelector('.app.in-dm')) return;
+    const img = e.target.closest('#log img[data-zoom]');
+    if (img) return openLightbox(img.src);
+    const v = e.target.closest('#log .voice');
+    if (!v) return;
+    if (e.target.closest('.voice-speed')) {
+      const rates = [1, 1.5, 2];
+      const r = rates[(rates.indexOf(Number(v.dataset.rate || 1)) + 1) % rates.length];
+      v.dataset.rate = r; e.target.closest('.voice-speed').textContent = r + '×';
+      if (playing?.el === v) playing.audio.playbackRate = r;
+      return;
+    }
+    if (!v.dataset.src) return;
+    if (e.target.closest('.wave') && playing?.el === v && playing.audio.duration) {
+      const rect = v.querySelector('.wave').getBoundingClientRect();
+      playing.audio.currentTime = ((e.clientX - rect.left) / rect.width) * playing.audio.duration;
+      return;
+    }
+    if (!e.target.closest('.voice-play')) return;
+    if (playing?.el === v) { playing.audio.paused ? playing.audio.play() : playing.audio.pause(); return; }
+    playing?.audio.pause();
+    const audio = new Audio(v.dataset.src);
+    audio.playbackRate = Number(v.dataset.rate || 1);
+    const btn = v.querySelector('.voice-play');
+    const bars = v.querySelectorAll('.wave i');
+    playing = { el: v, audio };
+    audio.onplay = () => { btn.innerHTML = icon('pause'); };
+    audio.onpause = () => { btn.innerHTML = icon('play'); };
+    audio.ontimeupdate = () => {
+      const d = isFinite(audio.duration) ? audio.duration : Number(v.dataset.dur) || 1;
+      const p = audio.currentTime / d;
+      bars.forEach((b, i) => b.classList.toggle('played', i / bars.length < p));
+      v.querySelector('.voice-time').textContent = fmtDur(audio.currentTime);
+    };
+    audio.onended = () => { btn.innerHTML = icon('play'); bars.forEach((b) => b.classList.remove('played')); v.querySelector('.voice-time').textContent = fmtDur(Number(v.dataset.dur)); playing = null; };
+    audio.play();
+  });
+  function openLightbox(src) {
+    const lb = document.createElement('div');
+    lb.className = 'lightbox';
+    lb.innerHTML = `<img src="${src}" alt=""><div class="lb-actions"><a href="${src}" download class="icon-btn light" title="Guardar">${icon('download')}</a><button class="icon-btn light" title="Cerrar">${icon('x')}</button></div>`;
+    lb.onclick = (e) => { if (!e.target.closest('a')) lb.remove(); };
+    document.body.appendChild(lb);
   }
 
   /* ---------------- Enviar ---------------- */
   function sendText(w, text, kind = 'msg') {
     if (w.status !== 'open') return;
-    sendJSON(w, { t: 'text', text, kind: kind === 'action' ? 'action' : 'text' });
-    addMessage(w, { mine: true, kind: kind === 'action' ? 'action' : 'text', text, ts: Date.now() });
+    const mid = crypto.randomUUID();
+    sendJSON(w, { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text' });
+    addMessage(w, { mid, mine: true, kind: kind === 'action' ? 'action' : 'text', text, ts: Date.now() });
+  }
+  function sendSticker(w, id) {
+    if (w.status !== 'open' || !STICKERS.includes(id)) return;
+    const mid = crypto.randomUUID();
+    sendJSON(w, { t: 'sticker', mid, id });
+    addMessage(w, { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now() });
   }
   function sendFile(w, file, extra = {}) {
     if (w.status !== 'open') return;
     if (file.size > MAX_FILE) return toast(`"${file.name}" supera el límite de 100 MB.`);
     if (!file.size) return;
     const f = { fid: crypto.randomUUID(), name: file.name || 'archivo', mime: file.type || 'application/octet-stream', size: file.size, kind: extra.voice ? 'audio' : fileKind(file.type), ...extra };
-    const local = { ...f, mine: true };
-    addMessage(w, { mine: true, kind: 'file', file: local, ts: Date.now() });
+    const local = { ...f };
+    addMessage(w, { mid: f.fid, mine: true, kind: 'file', file: local, ts: Date.now() });
     // Los envíos van en fila: un archivo después de otro
     w.sendQueue = w.sendQueue.then(async () => {
       const dc = w.dc;
@@ -390,15 +517,15 @@ export function createDM(ctx) {
         const buf = await file.slice(off, off + CHUNK).arrayBuffer();
         dc.send(buf);
         off += buf.byteLength;
-        progress(local, off / file.size);
+        progress(f.fid, off / file.size);
       }
       dc.send(JSON.stringify({ t: 'file-end', fid: f.fid }));
       local.url = URL.createObjectURL(file);
-      updateFile(w, local);
+      rerender(w, f.fid);
     }).catch((e) => sysLine(w, 'Error al enviar el archivo: ' + esc(e.message), 'err'));
   }
 
-  /* ---------------- Notas de voz ---------------- */
+  /* ---------------- Notas de voz (con forma de onda) ---------------- */
   let rec = null;
   async function startVoice(w) {
     if (rec || w.status !== 'open') return;
@@ -407,31 +534,103 @@ export function createDM(ctx) {
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); } catch { return toast('Permite el acceso al micrófono para grabar notas de voz.'); }
     const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
     const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
-    const r = { mr, stream, chunks: [], start: Date.now(), w };
+    const actx = new (window.AudioContext || window.webkitAudioContext)();
+    const an = actx.createAnalyser(); an.fftSize = 512;
+    actx.createMediaStreamSource(stream).connect(an);
+    const r = { mr, stream, actx, an, chunks: [], levels: [], start: Date.now(), w };
     rec = r;
     mr.ondataavailable = (e) => e.data.size && r.chunks.push(e.data);
     mr.start(250);
     document.getElementById('input-form').classList.add('recording');
-    const tick = () => { if (rec !== r) return; document.getElementById('rec-time').textContent = fmtDur((Date.now() - r.start) / 1000); r.raf = setTimeout(tick, 250); };
-    tick();
+    const canvas = document.getElementById('rec-wave');
+    const data = new Uint8Array(an.fftSize);
+    const draw = () => {
+      if (rec !== r) return;
+      an.getByteTimeDomainData(data);
+      let peak = 0; for (const v of data) peak = Math.max(peak, Math.abs(v - 128) / 128);
+      r.levels.push(Math.min(1, peak * 2.2));
+      if (canvas) {
+        canvas.width = canvas.clientWidth * devicePixelRatio; canvas.height = 28 * devicePixelRatio;
+        const c2 = canvas.getContext('2d'); const W = canvas.width, H = canvas.height;
+        c2.fillStyle = getComputedStyle(document.body).getPropertyValue('--accent');
+        const bw = 3 * devicePixelRatio, gap = 2 * devicePixelRatio, n = Math.floor(W / (bw + gap));
+        r.levels.slice(-n).forEach((l, i) => { const h = Math.max(2, l * H); c2.fillRect(i * (bw + gap), (H - h) / 2, bw, h); });
+      }
+      document.getElementById('rec-time').textContent = fmtDur((Date.now() - r.start) / 1000);
+      if (Date.now() - r.start > 10 * 60 * 1000) return stopVoice(true);
+      r.raf = requestAnimationFrame(draw);
+    };
+    draw();
   }
   function stopVoice(send) {
     const r = rec;
     if (!r) return;
     rec = null;
-    clearTimeout(r.raf);
+    cancelAnimationFrame(r.raf);
     document.getElementById('input-form').classList.remove('recording');
     r.mr.onstop = () => {
       r.stream.getTracks().forEach((t) => t.stop());
+      r.actx.close();
       const duration = (Date.now() - r.start) / 1000;
       if (!send) return;
       if (duration < 0.8) return toast('La nota de voz es demasiado corta.');
       const type = (r.mr.mimeType || 'audio/webm').split(';')[0];
       const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
-      sendFile(r.w, new File(r.chunks, `nota-de-voz.${ext}`, { type }), { voice: true, duration });
+      const n = 36, step = r.levels.length / n;
+      const wave = Array.from({ length: n }, (_, i) => {
+        const seg = r.levels.slice(Math.floor(i * step), Math.floor((i + 1) * step) || Math.floor(i * step) + 1);
+        return Math.round(Math.max(0.08, ...seg) * 100) / 100;
+      });
+      sendFile(r.w, new File(r.chunks, `nota-de-voz.${ext}`, { type }), { voice: true, duration, wave });
     };
     r.mr.stop();
   }
+
+  /* ---------------- Emojis y stickers ---------------- */
+  let pickerTab = 'emoji';
+  const recentEmoji = () => { try { return JSON.parse(localStorage.getItem('recentEmoji')) || []; } catch { return []; } };
+  function togglePicker() {
+    const p = document.getElementById('picker');
+    if (!p) return;
+    p.classList.toggle('hidden');
+    if (!p.classList.contains('hidden')) renderPicker();
+  }
+  function renderPicker() {
+    const p = document.getElementById('picker');
+    const tabs = `<div class="picker-tabs"><button type="button" data-ptab="emoji" class="${pickerTab === 'emoji' ? 'active' : ''}">😀 Emojis</button><button type="button" data-ptab="sticker" class="${pickerTab === 'sticker' ? 'active' : ''}">Stickers</button></div>`;
+    let body;
+    if (pickerTab === 'emoji') {
+      const rec2 = recentEmoji();
+      const cats = rec2.length ? [['🕘', 'Recientes', rec2], ...EMOJI] : EMOJI;
+      body = `<div class="emoji-cats">${cats.map(([ic, name], i) => `<button type="button" data-cat="${i}" title="${name}">${ic}</button>`).join('')}</div>
+        <div class="emoji-scroll">${cats.map(([, name, list], i) => `<div class="emoji-group" id="ecat-${i}"><small>${name}</small><div class="emoji-grid">${list.map((em) => `<button type="button" data-emoji="${em}">${em}</button>`).join('')}</div></div>`).join('')}</div>`;
+    } else {
+      body = `<div class="sticker-grid">${STICKERS.map((id) => `<button type="button" data-sticker="${id}">${stickerSvg(id)}</button>`).join('')}</div>`;
+    }
+    p.innerHTML = tabs + `<div class="picker-body">${body}</div>`;
+  }
+  document.addEventListener('click', (e) => {
+    const p = document.getElementById('picker');
+    if (!p) return;
+    if (e.target.closest('#emoji-btn')) return togglePicker();
+    if (!p.contains(e.target)) { p.classList.add('hidden'); return; }
+    const tab = e.target.closest('[data-ptab]');
+    if (tab) { pickerTab = tab.dataset.ptab; return renderPicker(); }
+    const cat = e.target.closest('[data-cat]');
+    if (cat) return document.getElementById('ecat-' + cat.dataset.cat)?.scrollIntoView({ block: 'start' });
+    const em = e.target.closest('[data-emoji]');
+    if (em) {
+      const input = document.getElementById('input');
+      const v = em.dataset.emoji, s0 = input.selectionStart ?? input.value.length;
+      input.value = input.value.slice(0, s0) + v + input.value.slice(input.selectionEnd ?? s0);
+      input.selectionStart = input.selectionEnd = s0 + v.length;
+      input.dispatchEvent(new Event('input'));
+      try { localStorage.setItem('recentEmoji', JSON.stringify([v, ...recentEmoji().filter((x) => x !== v)].slice(0, 24))); } catch { /* nada */ }
+      return;
+    }
+    const st = e.target.closest('[data-sticker]');
+    if (st) { const w = state.windows.get(state.active); if (w?.kind === 'dm') sendSticker(w, st.dataset.sticker); p.classList.add('hidden'); }
+  });
 
   /* ---------------- Llamadas ---------------- */
   async function getMedia(video) {
@@ -611,8 +810,10 @@ export function createDM(ctx) {
   }
   function onNickChange(nick) { for (const w of dmWindows()) sendJSON(w, { t: 'nick', nick }); }
 
+  // Diagnóstico (consola del navegador: __dmDebug())
+  window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
-    init, requestPrivate, onActivate, sendText, sendFile, startVoice, stopVoice,
+    init, requestPrivate, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };
