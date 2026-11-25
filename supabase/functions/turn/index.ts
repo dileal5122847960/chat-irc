@@ -1,10 +1,14 @@
 // Edge Function "turn": entrega credenciales TURN temporales sin exponer las claves.
-// Admite dos proveedores (se usa el que tenga sus secretos configurados):
-//   • Metered (gratis, 500 MB/mes, sin tarjeta):
+// Admite tres formas (se usa la primera que tenga sus secretos configurados):
+//   • Metered con usuario y contraseña fijos (gratis, 500 MB/mes, sin tarjeta):
+//       TURN_USERNAME, TURN_PASSWORD  → los de la credencial creada en Metered
+//   • Metered con API Key:
 //       METERED_DOMAIN   → p. ej. "chamuflac.metered.live"
 //       METERED_API_KEY  → la "API Key" de la app de Metered
 //   • Cloudflare (1.000 GB/mes gratis, requiere tarjeta):
 //       CF_TURN_KEY_ID, CF_TURN_API_TOKEN
+const TURN_USERNAME = Deno.env.get('TURN_USERNAME') ?? '';
+const TURN_PASSWORD = Deno.env.get('TURN_PASSWORD') ?? '';
 const METERED_DOMAIN = Deno.env.get('METERED_DOMAIN') ?? '';
 const METERED_API_KEY = Deno.env.get('METERED_API_KEY') ?? '';
 const CF_KEY_ID = Deno.env.get('CF_TURN_KEY_ID') ?? '';
@@ -26,6 +30,18 @@ Deno.serve(async (req) => {
   if (!ALLOWED.includes(origin)) return json({ error: 'forbidden' }, 403);
 
   try {
+    if (TURN_USERNAME && TURN_PASSWORD) {
+      const auth = { username: TURN_USERNAME, credential: TURN_PASSWORD };
+      return json({
+        iceServers: [
+          { urls: 'stun:stun.relay.metered.ca:80' },
+          { urls: 'turn:global.relay.metered.ca:80', ...auth },
+          { urls: 'turn:global.relay.metered.ca:80?transport=tcp', ...auth },
+          { urls: 'turn:global.relay.metered.ca:443', ...auth },
+          { urls: 'turns:global.relay.metered.ca:443?transport=tcp', ...auth },
+        ],
+      });
+    }
     if (METERED_DOMAIN && METERED_API_KEY) {
       const res = await fetch(`https://${METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${encodeURIComponent(METERED_API_KEY)}`);
       if (!res.ok) return json({ error: 'metered ' + res.status }, 502);
