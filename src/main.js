@@ -9,8 +9,10 @@ import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw,
 import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
+import { photos, pickImage, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from './profile.js';
 
 setLang(initialLang());
+applyDisplay(); // tamaño de letra y fondo elegidos en este dispositivo
 startI18n();
 
 /*
@@ -386,7 +388,7 @@ function openMenu(anchor, items, { title } = {}) {
   m.setAttribute('role', 'menu');
   m.innerHTML = (title ? `<div class="menu-title">${title}</div>` : '') + items.map((it, i) => it === '-'
     ? '<hr>'
-    : `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}" ${it.disabled ? 'disabled' : ''}>${it.icon ? icon(it.icon) : ''}<span>${it.html || esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</span></button>`).join('');
+    : `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''} ${it.chosen ? 'chosen' : ''}" ${it.disabled ? 'disabled' : ''}>${it.icon ? icon(it.icon) : ''}${it.lead || ''}<span>${it.html || esc(it.label)}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</span>${it.chosen ? icon('check') : ''}</button>`).join('');
   document.body.appendChild(m);
   const r = anchor.getBoundingClientRect();
   const mw = m.offsetWidth, mh = m.offsetHeight;
@@ -486,6 +488,7 @@ function cidIsAdmin(w, cid) { const p = w.people.get(cid); return !!p && personI
 function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
+  photos.setOwner(registered ? state.account?.id : null);
   loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
   if (registered && state.account?.id) mailbox.register(state.account.id).then(fetchMail); // dispositivo, versión y clave del buzón
   renderClient();
@@ -825,7 +828,7 @@ function renderChanList() {
   document.getElementById('dm-list').innerHTML = dms.map((w) => {
     const badge = w.unread ? `<span class="badge mention">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
     return `<button data-win="${esc(w.key)}" class="chan dm ${w.key === state.active ? 'active' : ''} ${w.unread ? 'unread' : ''}" title="${esc(dm.statusText(w))}">
-      <span class="dm-dot ${w.status}"></span>${avatar(w.peer.nick)}<span class="chan-name">${esc(w.peer.nick)}</span>${w.call ? `<span class="role admin">${icon('phone')}</span>` : ''}${badge}
+      <span class="dm-dot ${w.status}"></span>${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<span class="chan-name">${esc(w.peer.nick)}</span>${w.call ? `<span class="role admin">${icon('phone')}</span>` : ''}${badge}
       <span class="part" data-part title="Cerrar conversación">${icon('x')}</span></button>`;
   }).join('');
   document.getElementById('chan-list').innerHTML = joined.map((w) => {
@@ -1253,6 +1256,9 @@ function userMenu(anchor) {
   if (acc) items.push({ label: 'Amigos', icon: 'users', onClick: () => friends.open() });
   if (acc) items.push({ label: 'Nombre y apellido', hint: acc.firstName ? `${acc.firstName} ${acc.lastName}` : '', icon: 'users', onClick: editNameDialog });
   items.push(
+    { label: 'Mi foto', icon: 'image', hint: t(photos.mine() ? 'La ven en tus privados' : 'Sin foto'), onClick: () => photoMenu(anchor) },
+    { label: 'Tamaño de letra', icon: 'edit', hint: t(FONT_LABELS[display.font()]), onClick: () => fontMenu(anchor) },
+    { label: 'Fondo del chat', icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), onClick: () => wallMenu(anchor) },
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
     { label: document.documentElement.dataset.theme === 'dark' ? 'Tema claro' : 'Tema oscuro', icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', onClick: toggleTheme },
     { label: 'Idioma', html: `<span class="lang-opt">${esc(t('Idioma'))}: ${flag(getLang())}<span class="ugc">${esc(LANGS[getLang()])}</span></span>`, icon: 'globe', onClick: () => languageMenu(anchor) },
@@ -1262,6 +1268,32 @@ function userMenu(anchor) {
   if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
   openMenu(anchor, items, { title: `${avatar(state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
 }
+
+/* ---------- Foto (solo privados), letra y fondo ---------- */
+function photoMenu(anchor) {
+  const has = !!photos.mine();
+  openMenu(anchor, [
+    { label: has ? 'Cambiar foto' : 'Elegir foto', icon: 'image', onClick: async () => {
+      const img = await pickImage({ max: 256, square: true, quality: 0.8 });
+      if (!img) return;
+      photos.setMine(img); dm.broadcastPhoto(); toast(t('Foto guardada. La verán en tus privados.'));
+    } },
+    ...(has ? [{ label: 'Quitar foto', icon: 'trash', danger: true, onClick: () => { photos.setMine(null); dm.broadcastPhoto(); } }] : []),
+  ], { title: `${photos.avatar('me', state.nick)}<span><b>${esc(t('Mi foto'))}</b><small>${esc(t('Solo se ve en los privados. No se guarda en ningún servidor.'))}</small></span>` });
+}
+function fontMenu(anchor) {
+  openMenu(anchor, Object.keys(FONT_SIZES).map((k) => ({ label: FONT_LABELS[k], chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, onClick: () => display.setFont(k) })), { title: esc(t('Tamaño de letra')) });
+}
+function wallMenu(anchor) {
+  openMenu(anchor, [
+    ...Object.keys(WALLPAPERS).map((k) => ({ label: WALLPAPERS[k].label, chosen: display.wall() === k, lead: wallSwatch(k), onClick: () => display.setWall(k) })),
+    { label: 'Una foto mía…', chosen: display.wall() === 'foto', icon: 'image', onClick: async () => {
+      const img = await pickImage({ max: 1600, square: false, quality: 0.7 });
+      if (img) display.setWall('foto', img);
+    } },
+  ], { title: esc(t('Fondo del chat')) });
+}
+photos.onChange(() => { renderChanList(); const w = state.windows.get(state.active); if (w?.kind === 'dm') dm.onActivate(w); });
 
 async function editNameDialog() {
   const acc = state.account;
@@ -1352,6 +1384,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) fetc
 /* ---------- Privados ---------- */
 const dm = createDM({
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
+  photos, // foto de perfil (solo privados): viaja directamente entre las dos personas
   sys, addHtml, activate: (k) => activate(k),
   findPerson: (nick) => {
     for (const w of state.windows.values()) for (const p of w.people?.values() || []) if (!p.me && p.nick.toLowerCase() === nick.toLowerCase()) return { cid: p.cid, nick: p.nick, reg: p.reg };

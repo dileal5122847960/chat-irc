@@ -99,6 +99,16 @@ export function createDM(ctx) {
   }
   const me = (via) => ({ from: selfId(via), nick: state.nick, reg: state.registered, dev: DEV });
   const dmWindows = () => [...state.windows.values()].filter((w) => w.kind === 'dm');
+  // Foto de perfil (solo privados): viaja directamente entre los dos dispositivos, no por el servidor
+  const photoKey = (w) => (w.via === 'user' ? 'u:' : 't:') + w.peer.cid;
+  const peerAvatar = (w) => (ctx.photos ? ctx.photos.avatar(photoKey(w), w.peer.nick) : avatar(w.peer.nick));
+  const myAvatar = () => (ctx.photos ? ctx.photos.avatar('me', state.nick) : avatar(state.nick));
+  function sendPhoto(w) {
+    if (!ctx.photos || !(w.dc?.readyState === 'open' || w.relay)) return;
+    sendJSON(w, { t: 'photo', d: ctx.photos.mine() || null });
+  }
+  /** Al cambiar mi foto: se la envío a quien tenga un privado abierto conmigo. */
+  function broadcastPhoto() { for (const w of state.windows.values()) if (w.kind === 'dm' && w.status === 'open') sendPhoto(w); }
   const isIdle = (w) => ['closed', 'rejected', 'offline'].includes(w.status); // sin conexión en curso
   const findByPeer = (cid) => dmWindows().find((w) => w.peer.cid === cid && w.status !== 'closed' && w.status !== 'rejected');
   const canMail = (w) => w.via === 'user' && !!ctx.mailbox; // amigos: se puede escribir aunque no estén conectados
@@ -255,7 +265,7 @@ export function createDM(ctx) {
     }[w.status] || '';
   }
   function renderHeader(w) {
-    document.getElementById('win-name').innerHTML = `${avatar(w.peer.nick)}<span class="dm-title-nick" style="${nickStyle(w.peer.nick)}">${esc(w.peer.nick)}</span>${w.peer.reg ? verified : ''}`;
+    document.getElementById('win-name').innerHTML = `${peerAvatar(w)}<span class="dm-title-nick" style="${nickStyle(w.peer.nick)}">${esc(w.peer.nick)}</span>${w.peer.reg ? verified : ''}`;
     document.getElementById('topic').innerHTML = `<span class="dm-status ${w.status} ${w.relay ? 'relay' : ''}">${w.status === 'open' ? icon(w.relay ? 'unlock' : 'lock') : ''}${esc(statusText(w))}</span>`;
     const open = w.status === 'open' && !w.relay; // las llamadas necesitan conexión directa
     document.getElementById('call-audio').disabled = !open || !!w.call;
@@ -412,6 +422,7 @@ export function createDM(ctx) {
       w.everDirect = true;
       w.retries = 0;
       setStatus(w, 'open');
+      sendPhoto(w);
       if (restored) sysLine(w, `${icon('lock')} ` + esc(t('Conexión directa restablecida: vuelve el cifrado de extremo a extremo.')), 'join');
       else sysLine(w, `Conexión directa con <b>${esc(w.peer.nick)}</b>. Los mensajes, archivos y llamadas van cifrados de extremo a extremo y no se guardan en ningún sitio.`, 'join');
       if (w.autoCall !== undefined) { const v = w.autoCall; delete w.autoCall; setTimeout(() => startCall(w, v), 300); }
@@ -447,9 +458,10 @@ export function createDM(ctx) {
     clearTimeout(w.connectTimer);
     if (announce) w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'relay-on', ...route(w) } });
     if (w.status !== 'away') setStatus(w, 'open');
+    sendPhoto(w);
     sysLine(w, `${icon('unlock')} ` + esc(t(w.everDirect
       ? 'Se perdió la conexión directa. Mientras se intenta recuperar, la conversación sigue a través del servidor (sin cifrado de extremo a extremo; nada se guarda). Las llamadas no están disponibles en este modo.'
-      : 'No fue posible la conexión directa entre vuestras redes. La conversación continúa a través del servidor: los mensajes no se guardan, pero no van cifrados de extremo a extremo. Las llamadas no están disponibles en este modo.')), 'err');
+      : 'No fue posible la conexión directa entre sus redes. La conversación continúa a través del servidor: los mensajes no se guardan, pero no van cifrados de extremo a extremo. Las llamadas no están disponibles en este modo.')), 'err');
   }
 
   /* ---------------- Reconexión ---------------- */
@@ -532,6 +544,13 @@ export function createDM(ctx) {
         return;
       }
       case 'cam': w.peerCam = !!m.on; return renderCallUI(w);
+      case 'photo': {
+        if (!ctx.photos || (m.d !== null && typeof m.d !== 'string') || !ctx.photos.valid(m.d)) return;
+        ctx.photos.set(photoKey(w), m.d);
+        if (state.active === w.key) renderHeader(w);
+        ctx.renderChanList();
+        return;
+      }
       case 'call': return onCallOffer(w, !!m.video);
       case 'call-accept': return onCallAccepted(w);
       case 'call-reject': if (w.call) { sysLine(w, `📞 <b>${esc(w.peer.nick)}</b> rechazó la llamada.`, 'err'); endCall(w, false); } return;
@@ -656,9 +675,8 @@ export function createDM(ctx) {
     const loading = !f.url;
     if (f.voice || f.kind === 'audio') {
       const bars = (f.wave || Array(36).fill(0.3)).map((v) => `<i style="height:${Math.max(12, Math.round(v * 100))}%"></i>`).join('');
-      const nick = m.mine ? state.nick : w.peer.nick;
       return `<div class="voice" ${loading ? '' : `data-src="${f.url}"`} data-dur="${f.duration || 0}">
-        <span class="voice-av">${avatar(nick)}<i class="mic-mini">${icon('mic')}</i></span>
+        <span class="voice-av">${m.mine ? myAvatar() : peerAvatar(w)}<i class="mic-mini">${icon('mic')}</i></span>
         <button class="voice-play" aria-label="Reproducir" ${loading ? 'disabled' : ''}>${loading ? ring(f.fid) : icon('play')}</button>
         <span class="voice-track"><span class="wave">${bars}</span><small class="voice-time">${fmtDur(f.duration)}</small></span>
         <button class="voice-speed" title="Velocidad">1×</button></div>`;
@@ -954,7 +972,7 @@ export function createDM(ctx) {
     }
   }
   async function startCall(w, video) {
-    if (w.relay) return toast(t('Las llamadas necesitan conexión directa, que vuestras redes no permiten ahora mismo.'));
+    if (w.relay) return toast(t('Las llamadas necesitan conexión directa, que sus redes no permiten ahora mismo.'));
     if (w.status !== 'open' || w.call) return;
     if (document.querySelector('.call-overlay')) return toast('Ya estás en una llamada.');
     let stream;
@@ -1042,7 +1060,7 @@ export function createDM(ctx) {
     // El vídeo remoto va SIN sonido (los móviles permiten reproducirlo solo) y el audio por separado
     el.innerHTML = `<video class="remote-video" autoplay playsinline muted></video><audio class="remote-audio" autoplay></audio>
       ${incoming ? '' : `<div class="call-top"><button class="icon-btn light" data-call="min" title="Volver al chat">${icon('message')}</button><button class="icon-btn light" data-call="full" title="Pantalla completa">${icon('expand')}</button></div>`}
-      <div class="call-peer">${avatar(w.peer.nick)}<h2>${esc(w.peer.nick)}</h2><p class="call-status">${esc(statusLabel)}</p></div>
+      <div class="call-peer">${peerAvatar(w)}<h2>${esc(w.peer.nick)}</h2><p class="call-status">${esc(statusLabel)}</p></div>
       <video class="local-video hidden" autoplay playsinline muted></video>
       <div class="call-controls">${incoming
         ? `<button class="round red" data-call="reject" title="Rechazar">${icon('phone-off')}</button><button class="round green" data-call="accept" title="Contestar">${icon(w.call.video ? 'video' : 'phone')}</button>`
@@ -1182,7 +1200,7 @@ export function createDM(ctx) {
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
-    init, requestPrivate, acceptExternal, receiveMail, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
+    init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };

@@ -94,12 +94,12 @@ export function createFriends(ctx) {
       if (error) toast(t(error.message)); else if (ok) toast(t(ok, { nick: f.nick }));
       await refresh(); render();
     };
-    if (d.frAccept) return run('respond_friend_request', { p_number: f.user_number, p_accept: true }, 'Ahora sois amigos.');
+    if (d.frAccept) return run('respond_friend_request', { p_number: f.user_number, p_accept: true }, 'Ahora son amigos.');
     if (d.frReject) return run('respond_friend_request', { p_number: f.user_number, p_accept: false });
     if (d.frCancel) return run('remove_friend', { p_number: f.user_number });
     if (d.frRemove || d.frBlock) {
       const ok = await openDialog(d.frRemove
-        ? { title: t('Eliminar amigo'), text: esc(t('{nick} dejará de estar en tu lista. Podéis volver a agregaros.', { nick: f.nick })), confirm: t('Eliminar'), danger: true }
+        ? { title: t('Eliminar amigo'), text: esc(t('{nick} dejará de estar en tu lista. Pueden volver a agregarse.', { nick: f.nick })), confirm: t('Eliminar'), danger: true }
         : { title: t('Bloquear'), text: esc(t('{nick} no podrá escribirte, llamarte ni encontrarte por tu número.', { nick: f.nick })), confirm: t('Bloquear'), danger: true });
       if (ok) await supabase.rpc(d.frRemove ? 'remove_friend' : 'block_user', d.frRemove ? { p_number: f.user_number } : { p_number: f.user_number, p_block: true });
       await refresh();
@@ -130,7 +130,7 @@ export function createFriends(ctx) {
     if (!v || !found) return open();
     const { data, error } = await supabase.rpc('send_friend_request', { p_number: found.user_number });
     if (error) toast(t(error.message));
-    else if (data === 'accepted') toast(t('{nick} ya te había invitado: ahora sois amigos.', { nick: found.nick }));
+    else if (data === 'accepted') toast(t('{nick} ya te había invitado: ahora son amigos.', { nick: found.nick }));
     else { toast(t('Solicitud enviada a {nick}.', { nick: found.nick })); notifyFriendRequest(found.user_number); }
     await refresh();
     open();

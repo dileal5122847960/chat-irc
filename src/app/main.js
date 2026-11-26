@@ -16,6 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
+import { photos, pickImage, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from '../profile.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
 import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
@@ -29,6 +30,7 @@ const NICK_RE = /^[A-Za-z[\]\\`_^{|}][A-Za-z0-9[\]\\`_^{|}-]{1,19}$/;
 const SPLASH_MIN = 1200; // la bienvenida se ve al menos este tiempo
 
 setLang(initialLang());
+applyDisplay(); // tamaño de letra y fondo elegidos en este dispositivo
 startI18n();
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -283,6 +285,7 @@ function enterApp() {
   const a = state.account;
   state.clientId = String(a.number);
   state.nick = a.nick;
+  photos.setOwner(a.id);
   loadIceServers(SUPABASE_URL, SUPABASE_KEY);
   renderShell();
   dm = createDM(dmContext());
@@ -297,6 +300,7 @@ function dmContext() {
   return {
     state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
     sys, addHtml, activate, renderChanList: renderLists, updateTitle: () => {},
+    photos, // foto de perfil: viaja directamente entre amigos
     ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY),
     findPerson: (nick) => {
       const f = [...state.friends.values()].find((x) => x.status === 'accepted' && x.nick.toLowerCase() === nick.toLowerCase());
@@ -484,7 +488,7 @@ function chatsHtml(chats) {
     const last = [...w.msgs.values()].pop();
     const sub = last ? (last.mine ? '✓ ' : '') + previewText(last) : dm.statusText(w);
     return `<button class="m-row" data-chat="${esc(w.peer.cid)}">
-      <span class="m-av">${avatar(w.peer.nick)}<i class="dm-dot ${w.status}"></i></span>
+      <span class="m-av">${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<i class="dm-dot ${w.status}"></i></span>
       <span class="m-row-main"><b class="ugc">${esc(w.peer.nick)}</b><small class="${last ? 'ugc' : ''}">${esc(sub)}</small></span>
       ${w.call ? `<span class="m-row-ico">${icon('phone')}</span>` : ''}
       ${w.unread ? `<span class="badge mention">${w.unread > 99 ? '99+' : w.unread}</span>` : ''}
@@ -506,7 +510,7 @@ function friendsHtml(incoming) {
   }
   html += `<h3 class="m-sec">Amigos</h3>`;
   html += friends.length ? friends.map((f) => `<div class="m-row friend" data-friend="${f.number}">
-      <button class="m-row-open" data-chat="${f.number}"><span class="m-av">${avatar(f.nick)}</span>
+      <button class="m-row-open" data-chat="${f.number}"><span class="m-av">${photos.avatar('u:' + f.number, f.nick)}</span>
       <span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small class="ugc">${esc(name(f))}</small></span></button>
       <button class="icon-btn" data-call="${f.number}" title="Llamada de voz">${icon('phone')}</button>
       <button class="icon-btn" data-vcall="${f.number}" title="Videollamada">${icon('video')}</button>
@@ -543,7 +547,7 @@ async function onListClick(e) {
     await loadFriends();
     return data;
   };
-  if (d.accept) return run('respond_friend_request', { p_number: Number(d.accept), p_accept: true }, 'Ahora sois amigos.');
+  if (d.accept) return run('respond_friend_request', { p_number: Number(d.accept), p_accept: true }, 'Ahora son amigos.');
   if (d.reject) return run('respond_friend_request', { p_number: Number(d.reject), p_accept: false });
   if (d.cancel) return run('remove_friend', { p_number: Number(d.cancel) });
   if (d.unblock) return run('block_user', { p_number: Number(d.unblock), p_block: false });
@@ -648,7 +652,7 @@ function openMenu(anchor, items, title = '') {
   closeOverlays();
   const m = document.createElement('div');
   m.className = 'menu-pop m-sheet';
-  m.innerHTML = (title ? `<div class="menu-title">${title}</div>` : '') + items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.icon ? icon(it.icon) : ''}<span>${esc(it.label)}</span>${it.hint ? `<small class="ugc">${esc(it.hint)}</small>` : ''}</button>`).join('');
+  m.innerHTML = (title ? `<div class="menu-title">${title}</div>` : '') + items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''} ${it.chosen ? 'chosen' : ''}">${it.icon ? icon(it.icon) : ''}${it.lead || ''}<span>${esc(it.label)}</span>${it.chosen ? icon('check') : ''}${it.hint ? `<small class="ugc">${esc(it.hint)}</small>` : ''}</button>`).join('');
   const scrim = document.createElement('div');
   scrim.className = 'sheet-scrim';
   scrim.onclick = () => closeOverlays();
@@ -711,7 +715,7 @@ async function addFriendDialog() {
   if (!v || !found) return;
   const { data, error } = await supabase.rpc('send_friend_request', { p_number: found.user_number });
   if (error) return toast(t(error.message));
-  if (data === 'accepted') toast(t('{nick} ya te había invitado: ahora sois amigos.', { nick: found.nick }));
+  if (data === 'accepted') toast(t('{nick} ya te había invitado: ahora son amigos.', { nick: found.nick }));
   else { toast(t('Solicitud enviada a {nick}.', { nick: found.nick })); sendPush(found.user_number, 'friend', 'friend'); }
   setTab('friends');
   loadFriends();
@@ -724,7 +728,7 @@ function friendMenu(anchor, number) {
     { label: t('Copiar número'), icon: 'copy', hint: fmtNumber(f.number), run: () => copyText(String(f.number)) },
     '-',
     { label: t('Eliminar amigo'), icon: 'trash', danger: true, run: async () => {
-      const ok = await openDialog({ title: t('Eliminar amigo'), text: esc(t('{nick} dejará de estar en tu lista. Podéis volver a agregaros.', { nick: f.nick })), confirm: t('Eliminar'), danger: true });
+      const ok = await openDialog({ title: t('Eliminar amigo'), text: esc(t('{nick} dejará de estar en tu lista. Pueden volver a agregarse.', { nick: f.nick })), confirm: t('Eliminar'), danger: true });
       if (!ok) return;
       await supabase.rpc('remove_friend', { p_number: f.number });
       closeChatWith(number); loadFriends();
@@ -751,6 +755,9 @@ function accountMenu(anchor) {
   openMenu(anchor, [
     { label: t('Mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
     { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
+    { label: t('Mi foto'), icon: 'image', hint: t(photos.mine() ? 'La ven tus amigos en los privados' : 'Sin foto'), run: photoMenu },
+    { label: t('Tamaño de letra'), icon: 'edit', hint: t(FONT_LABELS[display.font()]), run: fontMenu },
+    { label: t('Fondo del chat'), icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), run: wallMenu },
     { label: t('Idioma'), icon: 'globe', hint: LANGS[getLang()], run: () => languageMenu(() => renderLists()) },
     { label: t('Cambiar tema'), icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', run: () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark') },
     '-',
@@ -760,6 +767,32 @@ function accountMenu(anchor) {
     } },
   ], `<b class="ugc">${esc(a.nick)}</b><small><span class="ugc">${esc(a.email || '')}</span> · v${esc(APP_VERSION)}</small>`);
 }
+/* ---------- Foto, letra y fondo ---------- */
+function photoMenu() {
+  const has = !!photos.mine();
+  openMenu(null, [
+    { label: t(has ? 'Cambiar foto' : 'Elegir foto'), icon: 'image', run: async () => {
+      const img = await pickImage({ max: 256, square: true, quality: 0.8 });
+      if (!img) return;
+      photos.setMine(img); dm?.broadcastPhoto(); toast(t('Foto guardada. La verán tus amigos al hablar contigo.'));
+    } },
+    ...(has ? [{ label: t('Quitar foto'), icon: 'trash', danger: true, run: () => { photos.setMine(null); dm?.broadcastPhoto(); } }] : []),
+  ], `<div class="my-photo-row">${photos.avatar('me', state.nick)}<span><b>${esc(t('Mi foto'))}</b><small>${esc(t('No se guarda en ningún servidor: va directamente a tus amigos cuando hablan en privado.'))}</small></span></div>`);
+}
+function fontMenu() {
+  openMenu(null, Object.keys(FONT_SIZES).map((k) => ({ label: t(FONT_LABELS[k]), chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, run: () => display.setFont(k) })), esc(t('Tamaño de letra')));
+}
+function wallMenu() {
+  openMenu(null, [
+    ...Object.keys(WALLPAPERS).map((k) => ({ label: t(WALLPAPERS[k].label), chosen: display.wall() === k, lead: wallSwatch(k), run: () => display.setWall(k) })),
+    { label: t('Una foto mía…'), chosen: display.wall() === 'foto', icon: 'image', run: async () => {
+      const img = await pickImage({ max: 1280, square: false, quality: 0.7 });
+      if (img) display.setWall('foto', img);
+    } },
+  ], esc(t('Fondo del chat')));
+}
+photos.onChange(() => { renderLists(); const w = state.windows.get(state.active); if (w) dm?.onActivate(w); });
+
 async function editNameDialog() {
   const a = state.account;
   const v = await openDialog({

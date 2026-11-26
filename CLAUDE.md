@@ -157,6 +157,11 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   `--tick-delivered`, `--read-mark`).
 - **Chat con amigos limpio** (decisión del dueño): sin avisos de conexión, reconexión ni errores (`sysLine` los omite si
   `w.via === 'user'`, salvo llamadas 📞/📹). El último mensaje queda siempre a la vista (`stickToBottom`, también con teclado).
+- **Foto de perfil, letra y fondo** (`src/profile.js`, decisión del dueño): la foto **solo se ve en privados** y **no pasa
+  por el servidor**: se guarda en el dispositivo del dueño (`myphoto:<uid>`) y viaja al amigo por el DataChannel
+  (mensaje `photo`, ≤90 KB, 256 px); el amigo la recuerda (`photo:u:<número>`; privados ocasionales solo en memoria).
+  En canales, iniciales. Tamaño de letra (`--fs`: Normal/Grande/Muy grande) y fondo del chat (degradados o foto propia,
+  `data-wall` / `--wall`) son preferencias del dispositivo. Español de Argentina: «son amigos», «pueden» (no «sois/podéis»).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).

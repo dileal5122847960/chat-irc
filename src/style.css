@@ -794,3 +794,19 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .tr-do .ico { width: 13px; height: 13px; }
 .tr-do:hover { opacity: 1; text-decoration: underline; }
 .app.in-dm .tr-do { color: var(--dm-accent); display: flex; margin: 3px 0 0; }
+
+/* ===== Foto de perfil (privados), tamaño de letra y fondo ===== */
+.avatar.photo { background: var(--elev); padding: 0; overflow: hidden; }
+.avatar.photo img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; }
+html { font-size: calc(16px * var(--fs, 1)); }
+body { font-size: calc(15px * var(--fs, 1)); }
+/* Fondo elegido: en las conversaciones (privados y canales) */
+:root[data-wall] .log, :root[data-wall] .app.in-dm .log { background: var(--wall) !important; background-attachment: local; }
+:root[data-wall] .log .sys .msg-body { backdrop-filter: blur(4px); }
+:root[data-wall] .log .msg { background: color-mix(in srgb, var(--bg) 78%, transparent); border-radius: 8px; }
+.wall-swatch { display: inline-block; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border); flex: none; }
+.menu-pop button.chosen { color: var(--accent-2); font-weight: 700; }
+.my-photo-row { display: flex; align-items: center; gap: 12px; }
+.my-photo-row .avatar { width: 64px; height: 64px; font-size: 1.2rem; }
+.fs-sample { width: 26px; text-align: center; font-weight: 700; flex: none; }
+.menu-pop button > .ico:last-child { margin-left: auto; color: var(--accent-2); }
