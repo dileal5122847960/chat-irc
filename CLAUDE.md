@@ -97,7 +97,7 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
 
 ## Configuración externa (ya hecha)
 
-- Supabase: migraciones `0001`–`0006` aplicadas (`0007` aplicada; `0008` pendiente de ejecutar al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
+- Supabase: migraciones `0001`–`0006` aplicadas (`0007` y `0008` aplicadas; `0008` verificada el 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
   "Confirm email" desactivado, anónimos desactivados, Google activado. Site URL = la de Vercel.
 - Google Cloud: cliente OAuth "Chat IRC" (proyecto "My First Project"), app publicada.
 - Vercel: proyecto `chat-irc` conectado a GitHub (despliegue automático desde `main`).
