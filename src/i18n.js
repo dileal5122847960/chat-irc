@@ -417,6 +417,16 @@ const ENTRIES = [
   ['Hablar', 'Talk', 'Conversar', 'Parler', 'Parla'],
   ['{nick} abrió una conversación privada contigo.', '{nick} opened a private conversation with you.', '{nick} abriu uma conversa privada com você.', '{nick} a ouvert une conversation privée avec toi.', '{nick} ha aperto una conversazione privata con te.'],
   ['la conversación sigue en otro dispositivo.', 'the conversation continues on another device.', 'a conversa continua em outro dispositivo.', 'la conversation continue sur un autre appareil.', 'la conversazione continua su un altro dispositivo.'],
+  ['no está conectado ahora. Puedes escribirle igual: le llegará cuando abra ChamuFlac.', 'is not online right now. You can still write: they will get it when they open ChamuFlac.', 'não está conectado agora. Você pode escrever mesmo assim: chegará quando abrir o ChamuFlac.', 'n’est pas connecté pour l’instant. Tu peux quand même écrire : il le recevra en ouvrant ChamuFlac.', 'non è connesso ora. Puoi scrivere lo stesso: lo riceverà quando aprirà ChamuFlac.'],
+  ['no está conectado ahora.', 'is not online right now.', 'não está conectado agora.', 'n’est pas connecté pour l’instant.', 'non è connesso ora.'],
+  ['sin conexión · tus mensajes le llegarán al conectarse', 'offline · your messages will arrive when they connect', 'sem conexão · suas mensagens chegarão quando se conectar', 'hors ligne · tes messages arriveront à sa connexion', 'offline · i tuoi messaggi arriveranno quando si connetterà'],
+  ['sin conexión', 'offline', 'sem conexão', 'hors ligne', 'offline'],
+  ['Mensaje para {nick} (le llegará al conectarse)', 'Message for {nick} (delivered when they connect)', 'Mensagem para {nick} (chegará quando se conectar)', 'Message pour {nick} (remis à sa connexion)', 'Messaggio per {nick} (arriverà quando si connetterà)'],
+  ['{nick} todavía no puede recibir mensajes sin conexión: tiene que actualizar la app o entrar una vez en la web.', '{nick} can’t receive offline messages yet: they need to update the app or sign in once on the web.', '{nick} ainda não pode receber mensagens sem conexão: precisa atualizar o app ou entrar uma vez na web.', '{nick} ne peut pas encore recevoir de messages hors ligne : il doit mettre à jour l’app ou se connecter une fois sur le web.', '{nick} non può ancora ricevere messaggi offline: deve aggiornare l’app o accedere una volta dal web.'],
+  ['No se pudo enviar el mensaje. Inténtalo de nuevo.', 'The message could not be sent. Please try again.', 'Não foi possível enviar a mensagem. Tente novamente.', 'Le message n’a pas pu être envoyé. Réessaie.', 'Impossibile inviare il messaggio. Riprova.'],
+  ['No se pudo descifrar un mensaje guardado (quizá se borraron los datos de la app).', 'A stored message could not be decrypted (the app data may have been cleared).', 'Não foi possível descriptografar uma mensagem guardada (talvez os dados do app tenham sido apagados).', 'Impossible de déchiffrer un message stocké (les données de l’app ont peut-être été effacées).', 'Impossibile decifrare un messaggio salvato (forse i dati dell’app sono stati cancellati).'],
+  ['Enviando…', 'Sending…', 'Enviando…', 'Envoi…', 'Invio…'],
+  ['No enviado', 'Not sent', 'Não enviado', 'Non envoyé', 'Non inviato'],
 ];
 
 // Textos con partes variables: [expresión regular sobre el español, inglés, portugués, francés, italiano]

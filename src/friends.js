@@ -150,5 +150,7 @@ export function createFriends(ctx) {
   }
   const isFriend = (number) => friends.some((f) => String(f.user_number) === String(number) && f.status === 'accepted');
 
-  return { start, stop, open, refresh, notify, isFriend };
+  const nickOf = (number) => friends.find((f) => String(f.user_number) === String(number))?.nick;
+
+  return { start, stop, open, refresh, notify, isFriend, nickOf };
 }

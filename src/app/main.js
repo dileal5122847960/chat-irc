@@ -15,6 +15,7 @@ import './app.css';
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
+import { createMailbox } from '../mailbox.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
 import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
@@ -287,9 +288,9 @@ function enterApp() {
   dm = createDM(dmContext());
   dm.init();
   state.ready = true;
-  registerDevice();
+  mailbox.register(state.account.id).then(fetchMail); // dispositivo + clave del buzón; luego, mensajes pendientes
   loadFriends().then(() => { for (const d of state.pendingTaps.splice(0)) handleTap(d); });
-  initPush({ onToken: (token) => registerDevice(token), onTap: handleTap });
+  initPush({ onToken: (token) => mailbox.register(state.account.id, token), onTap: handleTap });
 }
 
 function dmContext() {
@@ -309,7 +310,14 @@ function dmContext() {
     onInboxStatus: (status) => { state.inboxOk = status === 'SUBSCRIBED'; renderConn(); },
     // Entre amigos no hace falta aceptar: la conversación se abre sola
     autoAccept: (r) => state.friends.get(String(r.from))?.status === 'accepted',
-    onRequestSent: (peer, w) => sendPush(peer.cid, w.autoCall !== undefined ? 'call' : 'dm', w.id, !!w.autoCall),
+    // Buzón: con amigos se puede escribir aunque no estén conectados (los avisa la función push)
+    mailbox,
+    autoReconnect: true,
+    onMailPing: () => fetchMail(),
+    onMailSent: (w) => sendPush(w.peer.cid, 'msg', ''),
+    nickOf: (number) => state.friends.get(String(number))?.nick,
+    // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
+    onRequestSent: (peer, w) => { if (w.autoCall !== undefined) sendPush(peer.cid, 'call', w.id, !!w.autoCall); },
     onBackgroundOpen: (w) => { renderLists(); if (isForeground()) beep(); },
     onIncoming: (w, m) => {
       if (isForeground() && state.active === w.key) return;
@@ -321,13 +329,12 @@ function dmContext() {
 }
 const previewText = (m) => (m.kind === 'sticker' ? '😀 Sticker' : m.kind === 'file' ? (m.file?.voice ? '🎤 ' + t('Nota de voz') : '📎 ' + (m.file?.name || '')) : String(m.text || '').slice(0, 120));
 
-/* ---------- Dispositivo y avisos push ---------- */
-async function registerDevice(token = null) {
-  const key = 'deviceId:' + state.account.id;
-  const { data, error } = await supabase.rpc('register_device', {
-    p_device: Number(store.get(key)) || null, p_platform: platform, p_name: deviceName(), p_version: APP_VERSION, p_push_token: token,
-  });
-  if (!error && data) store.set(key, String(data));
+/* ---------- Dispositivo, buzón y avisos push ---------- */
+const mailbox = createMailbox({ supabase, platform, version: APP_VERSION, deviceName });
+async function fetchMail() {
+  if (!state.ready) return;
+  const items = await mailbox.fetch();
+  if (items.length) dm.receiveMail(items);
 }
 async function sendPush(to, kind, id, video = false) {
   if (!to) return;
@@ -346,8 +353,9 @@ function handleTap(d) {
   if (d.kind === 'friend') { setTab('friends'); activate('status'); return loadFriends(); }
   const from = String(d.from || '');
   if (!from) return;
+  if (d.kind === 'msg' || !d.id) return fetchMail().then(() => openChat(from)); // mensaje en el buzón
   const w = state.windows.get('dm:' + from);
-  if (w && !['closed', 'rejected'].includes(w.status)) return activate(w.key);
+  if (w && !['closed', 'rejected', 'offline'].includes(w.status)) return activate(w.key);
   if (d.id && dm.acceptExternal({ id: d.id, from, nick: d.nick || state.friends.get(from)?.nick || from, reg: true })) return;
   openChat(from);
 }
@@ -536,8 +544,9 @@ function openChat(number, video) {
   const key = 'dm:' + number;
   const w = state.windows.get(key);
   const callWanted = video !== undefined;
-  if (w && !['closed', 'rejected'].includes(w.status)) {
-    activate(key);
+  const idle = !w || ['closed', 'rejected', 'offline'].includes(w.status);
+  if (w && (!idle || !callWanted)) {
+    activate(key); // si no hay conexión, al mostrarse intenta conectar sola (autoReconnect)
     if (callWanted && w.status === 'open' && !w.relay && !w.call) dm.startCall(w, video);
     return;
   }
@@ -610,6 +619,7 @@ function sys(key, html, kind = 'info') {
 function onResume() {
   if (!state.ready) return;
   loadFriends();
+  fetchMail();
   const w = state.windows.get(state.active);
   if (w) { w.unread = 0; clearNotifications(w.peer.cid); renderLists(); }
   if (Date.now() - lastVersionCheck > 10 * 60 * 1000) checkVersion().then((v) => {
@@ -721,7 +731,7 @@ function chatMenu(anchor) {
   const w = state.windows.get(state.active);
   if (!w) return;
   openMenu(anchor, [
-    ...(['closed', 'rejected'].includes(w.status) ? [{ label: t('Volver a conectar'), icon: 'refresh', run: () => openChat(w.peer.cid) }] : []),
+    ...(['closed', 'rejected', 'offline'].includes(w.status) ? [{ label: t('Volver a conectar'), icon: 'refresh', run: () => openChat(w.peer.cid) }] : []),
     { label: t('Cerrar conversación'), icon: 'x', danger: true, run: () => dm.closeWindow(w) },
   ]);
 }
@@ -761,7 +771,7 @@ async function copyText(text, msg) {
   try { await navigator.clipboard.writeText(text); toast(msg || t('Copiado.')); } catch { toast(text); }
 }
 
-if (import.meta.env.DEV) window.__app = { state, supabase, handleTap, openChat, createClient };
+if (import.meta.env.DEV) window.__app = { state, supabase, handleTap, openChat, createClient, get dm() { return dm; } };
 
 /* ---------- ¡En marcha! ---------- */
 renderSplash();

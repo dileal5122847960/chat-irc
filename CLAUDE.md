@@ -67,10 +67,16 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
   (amigos, `user:<número>`, privado). La web registrada escucha también `user:<su número>` (acepta sola a sus amigos) y abre
   privados con amigos desde el panel Amigos («Hablar»). Cada dispositivo/pestaña tiene un `DEV`: con la misma cuenta abierta
   en varios sitios, la conversación se queda en el primero que responde (`peerDev`, señales con `to`) y los demás se retiran.
+- **Entre amigos no se pide permiso**: la conversación conecta sola (`autoReconnect` al abrirla) y se puede escribir enseguida.
+- **Buzón cifrado** (`src/mailbox.js`, migración 0011): si no hay conexión directa, texto y stickers se cifran en el dispositivo
+  (ECDH P-256 + AES-GCM) para cada dispositivo del amigo (`devices.public_key`, clave privada en localStorage `devkey:<uid>`)
+  y esperan en `mailbox` (`mail_send`); el dispositivo los recoge y se borran (`mail_fetch`); 30 días máximo. Aviso push
+  `kind: 'msg'` (sin el texto) y ping `mail` por la bandeja; acuses ✓✓ por la bandeja (`receipt`). Estado de ventana `offline`.
+  Fotos, audios y llamadas siguen necesitando conexión. Apps < 1.0.3 no tienen clave: subir `min_version` de android a 1.0.3.
 - **Amigos en la web** (`src/friends.js`): botón "Amigos" (con contador) junto al nick para cuentas registradas: agregar por
   número, aceptar/rechazar, cancelar, eliminar, bloquear. Se consulta al entrar, cada 2 min y al volver a la pestaña.
 - Márgenes del sistema en la app: usar `var(--sat)` / `var(--sab)` (Capacitor 8 inyecta `--safe-area-inset-*`), no `env()` solo.
-- Limitaciones conocidas: ambos deben estar conectados (no hay mensajes diferidos); descargar archivos recibidos en el WebView puede
+- Limitaciones conocidas: fotos/audios/llamadas requieren que ambos estén conectados; descargar archivos recibidos en el WebView puede
   no funcionar (pendiente: guardar con Filesystem/Share); llamada con pantalla completa sobre el bloqueo (ConnectionService) pendiente.
 
 ## Versiones y actualizaciones automáticas — decisión del dueño

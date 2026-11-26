@@ -6,8 +6,9 @@ import { translate } from './translate.js';
 import { APP_NAME, logoSvg, flag } from './brand.js';
 import { createGroupCall } from './groupcall.js';
 import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw, beep, loopTone } from './common.js';
-import { APP_VERSION, startVersionCheck, registerDevice } from './version.js';
+import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
+import { createMailbox } from './mailbox.js';
 
 setLang(initialLang());
 startI18n();
@@ -486,7 +487,7 @@ function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
   loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
-  if (registered && state.account?.id) registerDevice(supabase, state.account.id); // versión que usa este dispositivo
+  if (registered && state.account?.id) mailbox.register(state.account.id).then(fetchMail); // dispositivo, versión y clave del buzón
   renderClient();
   activate('status');
   loadChannels().then(() => {
@@ -1309,6 +1310,22 @@ async function quitChat() {
 }
 
 
+/* ---------- Buzón entre amigos (mensajes guardados cifrados mientras estabas desconectado) ---------- */
+const mailbox = createMailbox({
+  supabase, platform: 'web', version: APP_VERSION,
+  deviceName: () => {
+    const ua = navigator.userAgent;
+    return (/Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Navegador')
+      + ' · ' + (/Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : '');
+  },
+});
+async function fetchMail() {
+  if (!state.registered || !state.nick) return;
+  const items = await mailbox.fetch();
+  if (items.length) dm.receiveMail(items);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchMail(); });
+
 /* ---------- Privados ---------- */
 const dm = createDM({
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
@@ -1321,7 +1338,14 @@ const dm = createDM({
   myNumber: () => (state.registered ? state.account?.number : null),
   autoAccept: (r) => r.via === 'user' && friends.isFriend(r.from),
   resendRequests: 4,
-  onRequestSent: (peer, w) => { if (w.via === 'user') friends.notify(peer.cid, w.autoCall !== undefined ? 'call' : 'dm', w.id, !!w.autoCall); },
+  // Buzón: con amigos se puede escribir aunque no estén conectados
+  mailbox,
+  autoReconnect: true,
+  onMailPing: () => fetchMail(),
+  onMailSent: (w) => friends.notify(w.peer.cid, 'msg', ''),
+  nickOf: (number) => friends.nickOf(number),
+  // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
+  onRequestSent: (peer, w) => { if (w.via === 'user' && w.autoCall !== undefined) friends.notify(peer.cid, 'call', w.id, !!w.autoCall); },
   onBackgroundOpen: (w) => { beep(); toast(t('{nick} abrió una conversación privada contigo.', { nick: w.peer.nick })); },
 });
 function openPrivate(cid) {
@@ -1461,3 +1485,4 @@ const friends = createFriends({
     if (b) { b.textContent = n || ''; b.classList.toggle('hidden', !n); }
   },
 });
+

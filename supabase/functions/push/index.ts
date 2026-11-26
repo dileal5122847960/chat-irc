@@ -2,7 +2,8 @@
 // hablar con él o le está llamando, aunque tenga la app cerrada.
 //
 // Petición (POST, con la sesión del usuario en "Authorization: Bearer <token>"):
-//   { "to": 12345678, "kind": "dm" | "call" | "friend", "id": "<sala>", "video": false }
+//   { "to": 12345678, "kind": "dm" | "call" | "friend" | "msg", "id": "<sala>", "video": false }
+// "msg": dejó mensajes en el buzón (el aviso no lleva el texto: va cifrado de extremo a extremo).
 // Solo se avisa si quien llama y el destinatario son amigos (o, para "friend", si le envió
 // una solicitud de amistad). Lo comprueba push_targets() en la base de datos.
 //
@@ -53,8 +54,8 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const to = Number(body.to);
-    const kind = ['call', 'friend'].includes(body.kind) ? body.kind : 'dm';
-    const id = String(body.id ?? (kind === 'friend' ? 'friend' : '')).replace(/[^\w-]/g, '').slice(0, 40);
+    const kind = ['call', 'friend', 'msg'].includes(body.kind) ? body.kind : 'dm';
+    const id = String(body.id || (kind === 'friend' ? 'friend' : kind === 'msg' ? 'msg' : '')).replace(/[^\w-]/g, '').slice(0, 40);
     if (!(to >= 10000000 && to <= 99999999) || !id) return json({ error: 'bad_request' }, 400);
     if (!FCM_SERVICE_ACCOUNT) return json({ sent: 0, error: 'FCM no configurado' });
     if (!SERVICE_KEY) return json({ error: 'falta SUPABASE_SERVICE_ROLE_KEY' }, 500);
@@ -73,7 +74,7 @@ Deno.serve(async (req) => {
     const video = !!body.video;
     const title = nick;
     const text = kind === 'call' ? (video ? '📹 Videollamada entrante' : '📞 Llamada entrante')
-      : kind === 'friend' ? '👋 Te envió una solicitud de amistad' : '💬 Quiere hablar contigo';
+      : kind === 'friend' ? '👋 Te envió una solicitud de amistad' : kind === 'msg' ? '💬 Te envió un mensaje' : '💬 Quiere hablar contigo';
     const data = { kind, id, from: String(targets[0].sender_number), nick, video: video ? '1' : '0', ts: String(Date.now()) };
 
     let sent = 0;
@@ -113,7 +114,7 @@ async function sendFcm(token: string, title: string, body: string, data: Record<
         data,
         android: {
           priority: 'HIGH',
-          ttl: kind === 'call' ? '45s' : kind === 'friend' ? '86400s' : '120s', // si no llega a tiempo, ya no sirve
+          ttl: kind === 'call' ? '45s' : kind === 'friend' || kind === 'msg' ? '86400s' : '120s', // si no llega a tiempo, ya no sirve
           notification: {
             channel_id: kind === 'call' ? 'calls' : 'messages',
             tag: 'from-' + data.from, // un aviso por persona (el nuevo reemplaza al anterior)

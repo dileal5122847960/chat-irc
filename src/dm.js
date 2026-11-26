@@ -82,6 +82,8 @@ export function createDM(ctx) {
     ch.on('broadcast', { event: 'req' }, ({ payload }) => payload && onRequest(tag(payload)))
       .on('broadcast', { event: 'resp' }, ({ payload }) => payload && onResponse(tag(payload)))
       .on('broadcast', { event: 'cancel' }, ({ payload }) => payload && dismissRequest(payload.id))
+      .on('broadcast', { event: 'mail' }, () => ctx.onMailPing?.()) // un amigo dejó mensajes en el buzón
+      .on('broadcast', { event: 'receipt' }, ({ payload }) => payload && onReceipt(payload))
       .subscribe((status, err) => onStatus?.(ch, status, err));
     return ch;
   }
@@ -97,14 +99,16 @@ export function createDM(ctx) {
   }
   const me = (via) => ({ from: selfId(via), nick: state.nick, reg: state.registered, dev: DEV });
   const dmWindows = () => [...state.windows.values()].filter((w) => w.kind === 'dm');
+  const isIdle = (w) => ['closed', 'rejected', 'offline'].includes(w.status); // sin conexión en curso
   const findByPeer = (cid) => dmWindows().find((w) => w.peer.cid === cid && w.status !== 'closed' && w.status !== 'rejected');
+  const canMail = (w) => w.via === 'user' && !!ctx.mailbox; // amigos: se puede escribir aunque no estén conectados
 
   /** Abre (o enfoca) un privado con una persona del canal. */
   async function requestPrivate(peer) {
     peer = { ...peer, via: peer.via || defaultVia };
     if (peer.cid === selfId(peer.via)) return;
     const existing = state.windows.get('dm:' + peer.cid);
-    if (existing && existing.status !== 'closed' && existing.status !== 'rejected') return ctx.activate(existing.key);
+    if (existing && !isIdle(existing)) return ctx.activate(existing.key);
     if (existing) closeWindow(existing, true);
     // Si esa persona ya nos lo pidió, aceptamos su solicitud directamente
     const theirs = [...pendingRequests.values()].find((r) => r.from === peer.cid);
@@ -113,7 +117,8 @@ export function createDM(ctx) {
     w.status = 'pending';
     if (peer.autoCall !== undefined) w.autoCall = peer.autoCall; // llamar en cuanto conecte
     ctx.activate(w.key);
-    sysLine(w, `Esperando a que <b>${esc(peer.nick)}</b> acepte la conversación privada…`);
+    // Entre amigos no se pide permiso: la conversación conecta sola (y mientras tanto se puede escribir)
+    if (w.via !== 'user') sysLine(w, `Esperando a que <b>${esc(peer.nick)}</b> acepte la conversación privada…`);
     const ok = await sendTo(w.via, peer.cid, 'req', { id: w.id, ...me(w.via) });
     if (!ok) { setStatus(w, 'closed'); return sysLine(w, 'No se pudo enviar la solicitud.', 'err'); }
     ctx.onRequestSent?.(peer, w);
@@ -126,8 +131,13 @@ export function createDM(ctx) {
     }
     w.timer = setTimeout(() => {
       if (w.status !== 'pending') return;
-      setStatus(w, 'rejected');
-      sysLine(w, `<b>${esc(peer.nick)}</b> no respondió.`, 'err');
+      if (w.via === 'user') {
+        setStatus(w, 'offline');
+        sysLine(w, `<b>${esc(peer.nick)}</b> ${esc(t(canMail(w) ? 'no está conectado ahora. Puedes escribirle igual: le llegará cuando abra ChamuFlac.' : 'no está conectado ahora.'))}`);
+      } else {
+        setStatus(w, 'rejected');
+        sysLine(w, `<b>${esc(peer.nick)}</b> no respondió.`, 'err');
+      }
       sendTo(w.via, peer.cid, 'cancel', { id: w.id });
     }, REQUEST_TIMEOUT);
   }
@@ -189,7 +199,7 @@ export function createDM(ctx) {
     setStatus(w, 'connecting');
     if (!background || !state.active || state.active === w.key) ctx.activate(w.key);
     else ctx.onBackgroundOpen?.(w);
-    sysLine(w, 'Estableciendo conexión directa…');
+    if (w.via !== 'user') sysLine(w, 'Estableciendo conexión directa…');
     await joinSignaling(w);
     sendTo(w.via, r.from, 'resp', { id: r.id, ok: true, ...me(w.via) });
   }
@@ -212,7 +222,7 @@ export function createDM(ctx) {
     if (r.dev) w.peerDev = r.dev; // la conversación sigue con el dispositivo que respondió primero
     if (!r.ok) { setStatus(w, 'rejected'); return sysLine(w, `<b>${esc(w.peer.nick)}</b> rechazó la conversación privada.`, 'err'); }
     setStatus(w, 'connecting');
-    sysLine(w, `<b>${esc(w.peer.nick)}</b> aceptó. Estableciendo conexión directa…`);
+    if (w.via !== 'user') sysLine(w, `<b>${esc(w.peer.nick)}</b> aceptó. Estableciendo conexión directa…`);
     await joinSignaling(w);
   }
 
@@ -239,7 +249,8 @@ export function createDM(ctx) {
   }
   function statusText(w) {
     return {
-      pending: 'Esperando respuesta…', connecting: 'Conectando…', open: w.relay ? 'en línea · vía servidor (sin cifrado de extremo a extremo)' : 'en línea · cifrado de extremo a extremo',
+      pending: w.via === 'user' ? 'Conectando…' : 'Esperando respuesta…', connecting: 'Conectando…',
+      offline: canMail(w) ? 'sin conexión · tus mensajes le llegarán al conectarse' : 'sin conexión', open: w.relay ? 'en línea · vía servidor (sin cifrado de extremo a extremo)' : 'en línea · cifrado de extremo a extremo',
       away: 'reconectando…', closed: 'Conversación cerrada', rejected: 'No disponible',
     }[w.status] || '';
   }
@@ -252,18 +263,21 @@ export function createDM(ctx) {
   }
   function syncComposer(w) {
     const open = w.status === 'open';
+    const writable = open || canMail(w);
     const input = document.getElementById('input');
-    input.disabled = !open;
-    input.placeholder = open ? `Mensaje privado para ${w.peer.nick}` : statusText(w);
+    input.disabled = !writable;
+    input.placeholder = open ? `Mensaje privado para ${w.peer.nick}` : writable ? t('Mensaje para {nick} (le llegará al conectarse)', { nick: w.peer.nick }) : statusText(w);
     document.getElementById('attach-btn').disabled = !open;
     document.getElementById('mic-btn').disabled = !open;
-    document.getElementById('emoji-btn').disabled = !open;
+    document.getElementById('emoji-btn').disabled = !writable;
   }
   /** Llamado por la app al mostrar esta ventana. */
   function onActivate(w) {
     renderHeader(w);
     syncComposer(w);
     markRead(w);
+    // Amigo sin conexión en curso: al abrir la conversación se intenta conectar de nuevo
+    if (w.via === 'user' && isIdle(w) && ctx.autoReconnect) setTimeout(() => { if (state.active === w.key && isIdle(w)) requestPrivate({ ...w.peer }); }, 0);
   }
   function sysLine(w, html, kind = 'info') { ctx.sys(w.key, html, kind); }
 
@@ -541,21 +555,30 @@ export function createDM(ctx) {
     w.unreadMids.push(mid);
     markRead(w);
   }
+  const isLinked = (w) => w.dc?.readyState === 'open' || (w.relay && w.rt);
   /** Si el privado está a la vista, avisa al otro de que se han leído sus mensajes. */
   function markRead(w) {
     if (!w.unreadMids.length || state.active !== w.key || document.hidden) return;
-    sendJSON(w, { t: 'read', mids: w.unreadMids.splice(0) });
+    const mids = w.unreadMids.splice(0);
+    if (isLinked(w)) sendJSON(w, { t: 'read', mids });
+    else if (w.via === 'user') sendTo('user', w.peer.cid, 'receipt', { from: w.self, t: 'read', mids });
+  }
+  /** Acuse que llega por la bandeja (mensajes del buzón): ✓✓ entregado / leído. */
+  function onReceipt(p) {
+    const w = state.windows.get('dm:' + p.from);
+    if (!w || !Array.isArray(p.mids)) return;
+    for (const mid of p.mids.slice(0, 200)) setTick(w, String(mid), p.t === 'read' ? 'read' : 'delivered');
   }
   document.addEventListener('visibilitychange', () => { const w = state.windows.get(state.active); if (w?.kind === 'dm') markRead(w); });
   function setTick(w, mid, st) {
     const m = w.msgs.get(mid);
     if (!m || !m.mine) return;
-    const order = { sent: 0, delivered: 1, read: 2 };
+    const order = { failed: -2, queued: -1, sent: 0, delivered: 1, read: 2 };
     if (order[st] <= order[m.tick || 'sent']) return;
     m.tick = st;
     rerender(w, mid);
   }
-  const tickHtml = (m) => `<span class="tick ${m.tick || 'sent'}" title="${{ sent: 'Enviado', delivered: 'Entregado', read: 'Leído' }[m.tick || 'sent']}">${icon(m.tick === 'delivered' || m.tick === 'read' ? 'check2' : 'check')}</span>`;
+  const tickHtml = (m) => `<span class="tick ${m.tick || 'sent'}" title="${{ queued: 'Enviando…', failed: 'No enviado', sent: 'Enviado', delivered: 'Entregado', read: 'Leído' }[m.tick || 'sent']}">${icon({ queued: 'clock', failed: 'x', delivered: 'check2', read: 'check2' }[m.tick] || 'check')}</span>`;
 
   /* ---------------- Burbujas ---------------- */
   function addMessage(w, m) {
@@ -691,16 +714,69 @@ export function createDM(ctx) {
 
   /* ---------------- Enviar ---------------- */
   function sendText(w, text, kind = 'msg') {
-    if (w.status !== 'open') return;
     const mid = crypto.randomUUID();
-    sendJSON(w, { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: getLang() });
-    addMessage(w, { mid, mine: true, kind: kind === 'action' ? 'action' : 'text', text, ts: Date.now() });
+    const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: getLang() };
+    const local = { mid, mine: true, kind: data.kind, text, ts: Date.now() };
+    if (w.status !== 'open') return canMail(w) && sendViaMail(w, data, local);
+    sendJSON(w, data);
+    addMessage(w, local);
   }
   function sendSticker(w, id) {
-    if (w.status !== 'open' || !STICKERS.includes(id)) return;
+    if (!STICKERS.includes(id)) return;
     const mid = crypto.randomUUID();
+    const local = { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now() };
+    if (w.status !== 'open') return canMail(w) && sendViaMail(w, { t: 'sticker', mid, id }, local);
     sendJSON(w, { t: 'sticker', mid, id });
-    addMessage(w, { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now() });
+    addMessage(w, local);
+  }
+  /** Amigo sin conexión directa: el mensaje se cifra para sus dispositivos y espera en el buzón. */
+  async function sendViaMail(w, data, local) {
+    addMessage(w, local);
+    setTickRaw(w, local.mid, 'queued');
+    const r = await ctx.mailbox.send(w.peer.cid, { ...data, ts: local.ts, nick: state.nick });
+    if (!r.ok) {
+      setTickRaw(w, local.mid, 'failed');
+      return sysLine(w, esc(t(r.reason === 'nodevices'
+        ? '{nick} todavía no puede recibir mensajes sin conexión: tiene que actualizar la app o entrar una vez en la web.'
+        : 'No se pudo enviar el mensaje. Inténtalo de nuevo.', { nick: w.peer.nick })), 'err');
+    }
+    setTickRaw(w, local.mid, 'sent');
+    sendTo('user', w.peer.cid, 'mail', { from: w.self }); // si está conectado, lo recoge al momento
+    ctx.onMailSent?.(w);
+  }
+  function setTickRaw(w, mid, st) { const m = w.msgs.get(mid); if (m && (!m.tick || ['queued', 'sent', 'failed'].includes(m.tick))) { m.tick = st; rerender(w, mid); } }
+
+  /** Mensajes recogidos del buzón: [{ from, at, msg }] (ya descifrados). */
+  function receiveMail(items) {
+    const byPeer = new Map();
+    for (const it of items) {
+      const from = String(it.from);
+      let w = state.windows.get('dm:' + from);
+      if (!w) {
+        w = makeWindow({ cid: from, nick: String(it.msg?.nick || ctx.nickOf?.(from) || from).slice(0, 20), reg: true, via: 'user' }, crypto.randomUUID(), 'caller');
+        setStatus(w, 'offline');
+      }
+      const m = it.msg || {};
+      if (m.t === 'undecryptable') { sysLine(w, esc(t('No se pudo descifrar un mensaje guardado (quizá se borraron los datos de la app).')), 'err'); continue; }
+      const mid = safeId(m.mid);
+      if (w.msgs.has(mid)) continue;
+      const ts = Math.min(Number(m.ts) || Date.parse(it.at) || Date.now(), Date.now());
+      if (m.t === 'text') {
+        const msg = { mid, mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts, lang: LANGS[m.lang] ? m.lang : null };
+        if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'pending';
+        addMessage(w, msg);
+        if (msg.tr) translate(msg.text, msg.lang, getLang()).then((r) => { msg.tr = r ? 'done' : 'fail'; msg.trText = r?.text; rerender(w, mid); });
+      } else if (m.t === 'sticker' && STICKERS.includes(m.id)) {
+        addMessage(w, { mid, mine: false, kind: 'sticker', sticker: m.id, ts });
+      } else continue;
+      w.unreadMids.push(mid);
+      (byPeer.get(from) || byPeer.set(from, []).get(from)).push(mid);
+    }
+    for (const [from, mids] of byPeer) {
+      sendTo('user', from, 'receipt', { from: selfId('user'), t: 'ack', mids });
+      const w = state.windows.get('dm:' + from);
+      if (w) markRead(w);
+    }
   }
   function sendFile(w, file, extra = {}) {
     if (w.status !== 'open') return;
@@ -1035,12 +1111,12 @@ export function createDM(ctx) {
 
   /* ---------------- Cierre ---------------- */
   function peerGone(w, html) {
-    if (w.status === 'closed') return;
+    if (w.status === 'closed' || w.status === 'offline') return;
     clearTimeout(w.goneTimer); clearTimeout(w.retryTimer);
     if (w.call) endCall(w);
     sysLine(w, `${html} <button type="button" class="link" data-dm-retry="${esc(w.key)}">${esc(t('Volver a conectar'))}</button>`, 'part');
     teardown(w);
-    setStatus(w, 'closed');
+    setStatus(w, w.via === 'user' ? 'offline' : 'closed'); // con amigos se puede seguir escribiendo (buzón)
   }
   function teardown(w) {
     try { w.dc?.close(); } catch { /* nada */ }
@@ -1089,7 +1165,7 @@ export function createDM(ctx) {
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
-    init, requestPrivate, acceptExternal, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
+    init, requestPrivate, acceptExternal, receiveMail, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };
