@@ -9,8 +9,6 @@ name: App Windows
 
 on:
   workflow_dispatch:
-  push:
-    branches: ['app-windows'] # provisional: prueba de la rama (solo deja el instalador en Artifacts)
 
 permissions:
   contents: write

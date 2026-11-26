@@ -91,9 +91,16 @@ actualización). Para no rehacer nada:
   actualizaciones las hace la tienda; `download_url` = enlace de la App Store). Avisos: FCM con APNs (clave .p8 de Apple
   subida a Firebase); llamadas con la app cerrada → PushKit/CallKit (nativo, pendiente). Revisión de Apple: hace falta
   política de privacidad y la opción de **borrar la cuenta** desde la app.
-- **Windows:** envoltorio de escritorio (Tauri o Electron) con la misma `src/app/`; instalador firmado y
-  **auto-actualización** desde GitHub Releases (fila `windows` de `app_versions`). Avisos con la app cerrada: quedarse en la
-  bandeja del sistema (segundo plano) y/o Web Push; las notificaciones nativas de Windows desde el envoltorio.
+- **Windows (hecha, 26-11-2026): Electron** (`desktop/main.cjs`, `desktop/preload.cjs`, `electron-builder.yml`). Misma app
+  (`src/app/`) compilada con `npm run build:desktop` (versión `windowsVersion` de package.json) en `desktop/web`, servida como
+  `https://localhost` (protocolo interceptado: `turn` y `push` ya la aceptan). Puente `window.chamuflacDesktop` → `native.js`
+  (`platform: 'windows'`). Al cerrar la ventana sigue en la **bandeja** (recibe mensajes/llamadas con avisos de Windows);
+  arranca con Windows (opción en el menú de la bandeja); protocolo `com.chamuflac.app` para volver de Google.
+  **Auto-actualización**: `installUpdate(url)` descarga el `.exe` (solo de Releases `windows-v*` del repo) y lo ejecuta con
+  `/S --force-run`. Compilación: Actions → "App Windows" → Run workflow (main) → Release `windows-vX.Y.Z` con
+  `ChamuFlac-Setup.exe` (no es la "latest", que queda para Android) → actualizar fila `windows` de `app_versions` (0012).
+  Sin certificado de firma de código: SmartScreen avisa ("Más información → Ejecutar de todas formas"); un certificado
+  (~100–300 USD/año) lo quita.
 - El **buzón cifrado** y la bandeja `user:<número>` ya sirven para todas: cada dispositivo nuevo registra su clave.
 
 ## Versiones y actualizaciones automáticas — decisión del dueño
