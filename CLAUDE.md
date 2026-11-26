@@ -61,7 +61,7 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
   Proyecto Firebase "ChamuFlac" (plan Spark). Canales de aviso: `messages`, `calls`. Avisos locales con la app en segundo plano.
 - **Compilación**: `.github/workflows/android.yml` (GitHub Actions). Secretos de GitHub: `ANDROID_KEYSTORE_BASE64`,
   `ANDROID_KEYSTORE_PASSWORD` (clave de firma: la tiene el dueño; **nunca cambiarla**), `GOOGLE_SERVICES_JSON`.
-- **Publicar versión de Android**: subir `androidVersion` en `package.json` → etiqueta `android-vX.Y.Z` → el APK sale en Releases
+- **Publicar versión de Android**: subir `androidVersion` en `package.json` → Actions → "App Android" → Run workflow (main) → el APK sale en Releases
   (`ChamuFlac.apk`) → actualizar la fila `android` de `app_versions` (`latest_version`, `download_url`, y `min_version` si es obligatoria).
 - Limitaciones conocidas: ambos deben estar conectados (no hay mensajes diferidos); descargar archivos recibidos en el WebView puede
   no funcionar (pendiente: guardar con Filesystem/Share); llamada con pantalla completa sobre el bloqueo (ConnectionService) pendiente.
