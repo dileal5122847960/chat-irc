@@ -7,6 +7,7 @@ import { APP_NAME, logoSvg, flag } from './brand.js';
 import { createGroupCall } from './groupcall.js';
 import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw, beep, loopTone } from './common.js';
 import { APP_VERSION, startVersionCheck, registerDevice } from './version.js';
+import { createFriends } from './friends.js';
 
 setLang(initialLang());
 startI18n();
@@ -511,7 +512,8 @@ function renderClient() {
           <span id="me-avatar"></span>
           <span class="me-info"><b id="me-nick"></b><small><i class="dot on"></i> ${state.registered ? 'Registrado' : 'Invitado'}</small></span>
         </button>
-        <button class="icon-btn" id="theme-btn" title="Cambiar tema"></button>
+        ${state.registered ? `<button class="icon-btn friends-btn" id="friends-btn" title="Amigos">${icon('users')}<span class="badge mention hidden" id="friends-badge"></span></button>` : ''}
+        ${state.registered ? '' : '<button class="icon-btn" id="theme-btn" title="Cambiar tema"></button>'}
         <button class="icon-btn" id="quit-btn" title="Salir del chat">${icon('logout')}</button>
       </footer>
     </aside>
@@ -573,8 +575,9 @@ function renderClient() {
     else app.classList.toggle('members-hidden');
   };
   document.getElementById('quit-btn').onclick = quitChat;
-  document.getElementById('theme-btn').onclick = toggleTheme;
+  document.getElementById('theme-btn')?.addEventListener('click', toggleTheme); // registrados: el tema está en el menú de usuario
   document.getElementById('me-btn').onclick = (e) => userMenu(e.currentTarget);
+  if (state.registered) { document.getElementById('friends-btn').onclick = () => friends.open(); friends.start(); }
   document.getElementById('chan-menu').onclick = (e) => channelMenu(e.currentTarget);
   document.getElementById('members').onclick = (e) => {
     const li = e.target.closest('[data-cid]');
@@ -1223,6 +1226,7 @@ function userMenu(anchor) {
   const acc = state.registered ? state.account : null;
   const items = [];
   if (acc?.number) items.push({ label: 'Mi número', html: `<span>${esc(t('Mi número'))}: <b class="ugc">${fmtNumber(acc.number)}</b></span>`, hint: 'Tócalo para copiarlo y compartirlo con tus amigos', icon: 'hash', onClick: () => navigator.clipboard?.writeText(String(acc.number)).then(() => toast(t('Número copiado'))) });
+  if (acc) items.push({ label: 'Amigos', icon: 'users', onClick: () => friends.open() });
   if (acc) items.push({ label: 'Nombre y apellido', hint: acc.firstName ? `${acc.firstName} ${acc.lastName}` : '', icon: 'users', onClick: editNameDialog });
   items.push(
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
@@ -1294,6 +1298,7 @@ async function changeNickDialog() {
 
 async function quitChat() {
   closeOverlays();
+  friends.stop();
   dm.closeAll();
   for (const w of state.windows.values()) if (w.rt && w.kind !== 'dm') await supabase.removeChannel(w.rt);
   state.windows.clear();
@@ -1439,3 +1444,13 @@ function applyRekey(w, r, local = false) {
 /* ---------- Videollamadas grupales ---------- */
 const participantsInCall = (w) => [...(w.people?.values() || [])].filter((p) => p.call).length;
 const gc = createGroupCall({ state, esc, icon, avatar, toast, t, ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY), retrack: (w) => w.rt?.track(myPresence(w)) });
+
+/* ---------- Amigos (cuentas registradas) ---------- */
+const friends = createFriends({
+  supabase, esc, icon, avatar, t, toast, openDialog, closeOverlays, beep, SUPABASE_URL, SUPABASE_KEY,
+  myNumber: () => state.account?.number,
+  onCount: (n) => {
+    const b = document.getElementById('friends-badge');
+    if (b) { b.textContent = n || ''; b.classList.toggle('hidden', !n); }
+  },
+});

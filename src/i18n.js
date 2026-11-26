@@ -410,6 +410,10 @@ const ENTRIES = [
   ['Solo lo verán tus amigos.', 'Only your friends will see it.', 'Só seus amigos verão.', 'Seuls tes amis le verront.', 'Lo vedranno solo i tuoi amici.'],
   ['Copiado.', 'Copied.', 'Copiado.', 'Copié.', 'Copiato.'],
   ['Número copiado: {n}', 'Number copied: {n}', 'Número copiado: {n}', 'Numéro copié : {n}', 'Numero copiato: {n}'],
+  ['{nick} te envió una solicitud de amistad.', '{nick} sent you a friend request.', '{nick} enviou uma solicitação de amizade.', '{nick} t’a envoyé une demande d’ami.', '{nick} ti ha inviato una richiesta di amicizia.'],
+  ['Tus amigos', 'Your friends', 'Seus amigos', 'Tes amis', 'I tuoi amici'],
+  ['Aún no tienes amigos. Pulsa «Agregar amigo» y escribe el número de la otra persona: lo ve en la app o en su menú de usuario.', 'You have no friends yet. Press “Add friend” and enter the other person’s number: they can see it in the app or in their user menu.', 'Você ainda não tem amigos. Clique em “Adicionar amigo” e digite o número da outra pessoa: ela o vê no app ou no menu de usuário.', 'Tu n’as pas encore d’amis. Clique sur « Ajouter un ami » et saisis le numéro de l’autre personne : elle le voit dans l’app ou dans son menu utilisateur.', 'Non hai ancora amici. Premi «Aggiungi amico» e scrivi il numero dell’altra persona: lo vede nell’app o nel suo menu utente.'],
+  ['Para hablar con tus amigos en privado, con avisos en el móvil, usa la app de ChamuFlac para Android.', 'To talk privately with your friends, with notifications on your phone, use the ChamuFlac app for Android.', 'Para conversar em privado com seus amigos, com avisos no celular, use o app ChamuFlac para Android.', 'Pour parler en privé avec tes amis, avec des notifications sur ton téléphone, utilise l’app ChamuFlac pour Android.', 'Per parlare in privato con i tuoi amici, con notifiche sul telefono, usa l’app ChamuFlac per Android.'],
 ];
 
 // Textos con partes variables: [expresión regular sobre el español, inglés, portugués, francés, italiano]
