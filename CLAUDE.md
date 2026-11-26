@@ -145,8 +145,11 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   El `lang` de cada mensaje es el **idioma real del texto** (`detectLang()` en el dispositivo de quien escribe; si no está
   claro, el de su interfaz). MyMemory traduce con `autodetect` como origen. Su cupo gratuito es por conexión (diario).
 - **Exportar a PDF:** imprime el log visible en un iframe ("Guardar como PDF").
-- **Marcas de lectura propias** (no ✓✓): una línea = enviado, dos = entregado, dos **verdes** = leído; reloj = enviando,
-  ✕ roja = no enviado (iconos `line1`/`line2` en `src/common.js`, color `--read-mark`).
+- **Marcas de lectura propias** (no ✓✓): una línea **bordó** = aún no le llegó, dos **azules** = le llegó, dos **verdes** =
+  leído; reloj = enviando, ✕ roja = no enviado (iconos `line1`/`line2` en `src/common.js`; colores `--tick-sent`,
+  `--tick-delivered`, `--read-mark`).
+- **Chat con amigos limpio** (decisión del dueño): sin avisos de conexión, reconexión ni errores (`sysLine` los omite si
+  `w.via === 'user'`, salvo llamadas 📞/📹). El último mensaje queda siempre a la vista (`stickToBottom`, también con teclado).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).

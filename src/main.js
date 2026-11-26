@@ -558,6 +558,7 @@ function renderClient() {
   updateMe();
   updateThemeBtn();
   bindComposer();
+  stickToBottom(document.getElementById('log'));
 
   const app = document.getElementById('app');
   const closeSide = () => app.classList.remove('side-open');
@@ -633,6 +634,15 @@ function renderClient() {
   trackLobby();
 }
 
+/** Si se estaba viendo el final de la conversación, sigue pegado abajo aunque cambie el tamaño
+ *  (al abrirse el teclado del móvil, al cargar una foto…): lo último nunca queda tapado. */
+function stickToBottom(log) {
+  let stick = true;
+  log.addEventListener('scroll', () => { stick = log.scrollHeight - log.scrollTop - log.clientHeight < 150; }, { passive: true });
+  const keep = () => { if (stick) log.scrollTop = log.scrollHeight; };
+  new ResizeObserver(keep).observe(log);
+  window.visualViewport?.addEventListener('resize', keep);
+}
 function bindComposer() {
   const input = document.getElementById('input');
   const actionBtn = document.getElementById('action-btn');
@@ -776,10 +786,11 @@ function addHtml(key, html, { count = false, mention = false } = {}) {
   if (state.active === key) {
     const log = document.getElementById('log');
     log.querySelector('.empty')?.remove();
-    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 150;
     log.insertAdjacentHTML('beforeend', html);
     if (key !== 'status' && log.children.length > 500) log.firstElementChild.remove();
-    if (atBottom) log.scrollTop = log.scrollHeight;
+    // Lo que escribo yo siempre queda a la vista (también tras dibujarse fotos o audios)
+    if (atBottom || html.includes('bub-row out')) { log.scrollTop = log.scrollHeight; requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; }); }
   }
   if (count && (state.active !== key || document.hidden)) {
     w.unread = (w.unread || 0) + 1; if (mention) w.mention = true;

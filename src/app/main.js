@@ -408,6 +408,7 @@ function renderShell() {
     <div class="dm-requests" id="dm-requests" aria-live="polite"></div>
   </div>`;
   hideSplash();
+  stickToBottom(document.getElementById('log'));
   document.getElementById('m-tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); };
   document.getElementById('menu-btn').onclick = (e) => accountMenu(e.currentTarget);
   document.getElementById('add-friend').onclick = addFriendDialog;
@@ -436,6 +437,15 @@ function renderShell() {
   };
   renderUpdateStrip();
   setTab(state.tab);
+}
+/** Si se estaba viendo el final de la conversación, sigue pegado abajo aunque cambie el tamaño
+ *  (al abrirse el teclado del móvil, al cargar una foto…): lo último nunca queda tapado. */
+function stickToBottom(log) {
+  let stick = true;
+  log.addEventListener('scroll', () => { stick = log.scrollHeight - log.scrollTop - log.clientHeight < 150; }, { passive: true });
+  const keep = () => { if (stick) log.scrollTop = log.scrollHeight; };
+  new ResizeObserver(keep).observe(log);
+  window.visualViewport?.addEventListener('resize', keep);
 }
 function renderConn() {
   const el = document.getElementById('m-conn');
@@ -602,10 +612,11 @@ function addHtml(key, html, { count = false } = {}) {
   if (w.lines.length > 500) w.lines.shift();
   if (state.active === key) {
     const log = document.getElementById('log');
-    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 150;
     log.insertAdjacentHTML('beforeend', html);
     if (log.children.length > 500) log.firstElementChild.remove();
-    if (atBottom) log.scrollTop = log.scrollHeight;
+    // Lo que escribo yo siempre queda a la vista (también tras dibujarse fotos o audios)
+    if (atBottom || html.includes('bub-row out')) { log.scrollTop = log.scrollHeight; requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; }); }
   }
   if (count && (state.active !== key || !isForeground())) w.unread = (w.unread || 0) + 1;
   renderLists();

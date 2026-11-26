@@ -478,9 +478,10 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .btext + .bmeta { margin-top: -15px; }
 .tick { display: inline-flex; }
 .tick .ico { width: 16px; height: 16px; stroke-width: 2.6; }
-/* Marcas propias de ChamuFlac: una línea = enviado, dos = entregado, dos verdes = leído */
-.tick.queued, .tick.sent { color: var(--dm-meta); opacity: .75; }
-.tick.delivered { color: var(--dm-meta); }
+/* Marcas propias de ChamuFlac: una línea bordó = aún no le llegó, dos azules = le llegó, dos verdes = leído */
+.tick.queued { color: var(--dm-meta); opacity: .75; }
+.tick.sent { color: var(--tick-sent); }
+.tick.delivered { color: var(--tick-delivered); }
 .tick.read { color: var(--read-mark); }
 .tick.failed { color: var(--danger); }
 .bub-row.emoji-only .bubble, .bub-row.sticker-msg .bubble { background: none !important; box-shadow: none; padding: 0; }
@@ -500,6 +501,8 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .media-ph .ico { width: 48px; height: 48px; opacity: .35; }
 .bub-row.media-msg .bmeta { position: absolute; right: 10px; bottom: 9px; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .7); margin: 0; float: none; }
 .bub-row.media-msg .tick.read { color: #6ee7a0; }
+.bub-row.media-msg .tick.sent { color: #ffb3c1; }
+.bub-row.media-msg .tick.delivered { color: #a9d6ff; }
 
 .progress-ring { --p: 0; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--dm-accent) calc(var(--p) * 1%), rgba(0, 0, 0, .25) 0); }
 .progress-ring span { width: 36px; height: 36px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; font-size: .62rem; font-weight: 700; display: grid; place-items: center; }
@@ -606,6 +609,7 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
   --text: #f6e9eb; --muted: #b8959c; --faint: #7f6168;
   --accent: #e11d48; --accent-2: #ff6b7d; --mention: rgba(251, 191, 36, .1);
   --dm-bg: #12080b; --dm-pattern: rgba(255, 255, 255, .03); --bub-in: #2b1920; --bub-out: #6b1426; --dm-accent: #ff4d6d; --dm-meta: rgba(246, 233, 235, .6);
+  --tick-sent: #ff8fa3; --tick-delivered: #8cc8ff; --read-mark: #7ef0a8; /* marcas: bordó (sin entregar) · azul (entregado) · verde (leído) */
   --brand-grad: linear-gradient(135deg, #ff5a5f, #c81d3a);
 }
 :root[data-theme="light"] {
@@ -614,6 +618,7 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
   --text: #2a1117; --muted: #7a5560; --faint: #b89aa2;
   --accent: #c81d3a; --accent-2: #e11d48;
   --dm-bg: #fbefe9; --dm-pattern: rgba(120, 20, 40, .05); --bub-in: #ffffff; --bub-out: #ffe1e4; --dm-accent: #d61f45; --dm-meta: #8a6770;
+  --tick-sent: #8b1538; --tick-delivered: #1f6fd6; --read-mark: #15803d;
   --brand-grad: linear-gradient(135deg, #ff5a5f, #c81d3a);
 }
 .btn.primary, .send { background: var(--brand-grad); }

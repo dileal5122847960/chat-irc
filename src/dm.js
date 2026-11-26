@@ -279,7 +279,12 @@ export function createDM(ctx) {
     // Amigo sin conexión en curso: al abrir la conversación se intenta conectar de nuevo
     if (w.via === 'user' && isIdle(w) && ctx.autoReconnect) setTimeout(() => { if (state.active === w.key && isIdle(w)) requestPrivate({ ...w.peer }); }, 0);
   }
-  function sysLine(w, html, kind = 'info') { ctx.sys(w.key, html, kind); }
+  // Con amigos el chat queda limpio, como en una app de mensajería: sin avisos de conexión,
+  // reconexión ni errores (el estado se ve en la cabecera y en las marcas). Solo las llamadas.
+  function sysLine(w, html, kind = 'info') {
+    if (w.via === 'user' && !/📞|📹/.test(html)) return;
+    ctx.sys(w.key, html, kind);
+  }
 
   /* ---------------- Señalización y conexión WebRTC ---------------- */
   async function joinSignaling(w) {
@@ -634,7 +639,11 @@ export function createDM(ctx) {
     const i = w.lines.findIndex((l) => l.includes(marker));
     if (i >= 0) w.lines[i] = html;
     const el = document.getElementById('m-' + mid);
-    if (el) el.outerHTML = html;
+    if (!el) return;
+    const log = el.closest('.log');
+    const atBottom = log && log.scrollHeight - log.scrollTop - log.clientHeight < 150;
+    el.outerHTML = html;
+    if (atBottom) log.scrollTop = log.scrollHeight;
   }
   function fileKind(mime) {
     if (/^image\//.test(mime)) return 'image';
@@ -745,9 +754,9 @@ export function createDM(ctx) {
     const r = await ctx.mailbox.send(w.peer.cid, { ...data, ts: local.ts, nick: state.nick });
     if (!r.ok) {
       setTickRaw(w, local.mid, 'failed');
-      return sysLine(w, esc(t(r.reason === 'nodevices'
+      return toast(t(r.reason === 'nodevices'
         ? '{nick} todavía no puede recibir mensajes sin conexión: tiene que actualizar la app o entrar una vez en la web.'
-        : 'No se pudo enviar el mensaje. Inténtalo de nuevo.', { nick: w.peer.nick })), 'err');
+        : 'No se pudo enviar el mensaje. Inténtalo de nuevo.', { nick: w.peer.nick }));
     }
     setTickRaw(w, local.mid, 'sent');
     sendTo('user', w.peer.cid, 'mail', { from: w.self }); // si está conectado, lo recoge al momento
