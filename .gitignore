@@ -5,3 +5,5 @@ dist/
 .env.*.local
 .vercel
 dist-app
+firma-android*.txt
+*.jks
