@@ -79,6 +79,23 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
 - Limitaciones conocidas: fotos/audios/llamadas requieren que ambos estén conectados; descargar archivos recibidos en el WebView puede
   no funcionar (pendiente: guardar con Filesystem/Share); llamada con pantalla completa sobre el bloqueo (ConnectionService) pendiente.
 
+## Apps para iPhone (iOS) y Windows — decisión del dueño (26-11-2026)
+
+Habrá también versión **iOS (iPhone)** y **Windows**, con lo mismo que la de Android (amigos, privados, buzón, avisos,
+actualización). Para no rehacer nada:
+- **Todo lo común va en `src/`** (`dm.js`, `mailbox.js`, `friends.js`, `common.js`, `config.js`, `src/app/main.js`); lo propio
+  de cada sistema, solo en `src/app/native.js` (avisos, enlaces, navegador, segundo plano). `platform` sale de ahí
+  (`android` / `ios` / `windows`) y se usa en `check_app_version` y `register_device` (la BD ya admite esas plataformas).
+- **iOS:** Capacitor (`npx cap add ios`) reutilizando `src/app/`. Requiere Mac/Xcode → compilar en GitHub Actions con
+  `macos-latest`; cuenta **Apple Developer (99 USD/año)**; distribución por **TestFlight/App Store** (no hay APK: las
+  actualizaciones las hace la tienda; `download_url` = enlace de la App Store). Avisos: FCM con APNs (clave .p8 de Apple
+  subida a Firebase); llamadas con la app cerrada → PushKit/CallKit (nativo, pendiente). Revisión de Apple: hace falta
+  política de privacidad y la opción de **borrar la cuenta** desde la app.
+- **Windows:** envoltorio de escritorio (Tauri o Electron) con la misma `src/app/`; instalador firmado y
+  **auto-actualización** desde GitHub Releases (fila `windows` de `app_versions`). Avisos con la app cerrada: quedarse en la
+  bandeja del sistema (segundo plano) y/o Web Push; las notificaciones nativas de Windows desde el envoltorio.
+- El **buzón cifrado** y la bandeja `user:<número>` ya sirven para todas: cada dispositivo nuevo registra su clave.
+
 ## Versiones y actualizaciones automáticas — decisión del dueño
 
 Saldrán muchas versiones antes de la final: **todas las apps se actualizan solas**.
@@ -131,7 +148,7 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
 
 ## Configuración externa (ya hecha)
 
-- Supabase: migraciones `0001`–`0006` aplicadas (`0007`–`0010` aplicadas y verificadas al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
+- Supabase: migraciones `0001`–`0006` aplicadas (`0007`–`0011` aplicadas y verificadas al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
   "Confirm email" desactivado, anónimos desactivados, Google activado. Site URL = la de Vercel.
 - Google Cloud: cliente OAuth "Chat IRC" (proyecto "My First Project"), app publicada.
 - Vercel: proyecto `chat-irc` conectado a GitHub (despliegue automático desde `main`).

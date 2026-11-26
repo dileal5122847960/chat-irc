@@ -237,7 +237,7 @@ export function createDM(ctx) {
       msgs: new Map(), unreadMids: [], lastBubble: null,
     };
     const prev = carry.get(w.key);
-    if (prev) { carry.delete(w.key); w.lines = prev.lines; w.msgs = prev.msgs; }
+    if (prev) { carry.delete(w.key); w.lines = prev.lines; w.msgs = prev.msgs; w.unreadMids = prev.unreadMids || []; w.unread = prev.unread || 0; }
     state.windows.set(w.key, w);
     ctx.renderChanList();
     return w;
@@ -1135,7 +1135,7 @@ export function createDM(ctx) {
     w.status = 'closed'; // la ventana vieja ya no reacciona (su clave puede reutilizarla otra)
     setTimeout(() => teardown(w), 200);
     state.windows.delete(w.key);
-    if (silent) carry.set(w.key, { lines: w.lines, msgs: w.msgs }); // se reemplaza: se conserva lo ya hablado
+    if (silent) carry.set(w.key, { lines: w.lines, msgs: w.msgs, unreadMids: w.unreadMids, unread: w.unread }); // se reemplaza: se conserva lo ya hablado (y lo pendiente de leer)
     if (!silent && state.active === w.key) ctx.activate('status');
     ctx.renderChanList();
   }
