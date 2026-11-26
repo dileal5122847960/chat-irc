@@ -45,6 +45,22 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
   que solo el dueño escuche su canal. Push nativo: FCM (Android/Windows) / APNs-PushKit (iOS).
 - Las apps nativas podrían hacerse con Capacitor o React Native reutilizando `src/dm.js`.
 
+## Versiones y actualizaciones automáticas — decisión del dueño
+
+Saldrán muchas versiones antes de la final: **todas las apps se actualizan solas**.
+- Tabla **`app_versions`** (una fila por plataforma: web, android, ios, windows…): `latest_version`,
+  `min_version` (por debajo = actualización **obligatoria**), `download_url`, `notes`.
+- Cada app, al conectarse, llama a **`check_app_version(plataforma, versión)`** →
+  `current` / `available` / `required`. `devices.app_version` guarda qué versión usa cada dispositivo.
+- **Web** (`src/version.js`): la versión sale de `package.json` (`__APP_VERSION__`); cada build genera
+  `/version.json` con un `build` único → si cambia, aviso "Nueva versión disponible"; si la BD dice
+  `required`, se recarga sola (espera a que termine una llamada). Comprueba al entrar, cada 10 min y al
+  volver a la pestaña.
+- **Al publicar una versión:** subir `version` en `package.json` (semver). Para forzar la
+  actualización, actualizar `min_version` de la fila `web` (SQL). Para las apps nativas, actualizar su
+  fila al publicar cada build. Apps nativas: auto-actualización de tiendas/instalador y, con Capacitor,
+  actualización de la parte web sin pasar por la tienda.
+
 ## Arquitectura
 
 - **Frontend:** Vite + JavaScript sin framework (`src/`). `npm run dev` / `npm run build`.
@@ -81,7 +97,7 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
 
 ## Configuración externa (ya hecha)
 
-- Supabase: migraciones `0001`–`0006` aplicadas (`0007` pendiente de ejecutar al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
+- Supabase: migraciones `0001`–`0006` aplicadas (`0007` aplicada; `0008` pendiente de ejecutar al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
   "Confirm email" desactivado, anónimos desactivados, Google activado. Site URL = la de Vercel.
 - Google Cloud: cliente OAuth "Chat IRC" (proyecto "My First Project"), app publicada.
 - Vercel: proyecto `chat-irc` conectado a GitHub (despliegue automático desde `main`).

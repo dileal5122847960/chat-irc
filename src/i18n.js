@@ -326,6 +326,13 @@ const ENTRIES = [
   ['Número copiado', 'Number copied', 'Número copiado', 'Numéro copié', 'Numero copiato'],
   ['Solo los verán tus amigos.', 'Only your friends will see them.', 'Só seus amigos os verão.', 'Seuls tes amis les verront.', 'Li vedranno solo i tuoi amici.'],
   ['Guardado.', 'Saved.', 'Salvo.', 'Enregistré.', 'Salvato.'],
+  // Actualizaciones
+  ['Actualización obligatoria', 'Required update', 'Atualização obrigatória', 'Mise à jour obligatoire', 'Aggiornamento obbligatorio'],
+  ['La app se actualizará en unos segundos…', 'The app will update in a few seconds…', 'O app será atualizado em alguns segundos…', 'L’app va se mettre à jour dans quelques secondes…', 'L’app si aggiornerà tra pochi secondi…'],
+  ['Nueva versión disponible', 'New version available', 'Nova versão disponível', 'Nouvelle version disponible', 'Nuova versione disponibile'],
+  ['Actualizar', 'Update', 'Atualizar', 'Mettre à jour', 'Aggiorna'],
+  ['Más tarde', 'Later', 'Mais tarde', 'Plus tard', 'Più tardi'],
+  ['Termina la llamada antes de actualizar.', 'Finish the call before updating.', 'Termine a chamada antes de atualizar.', 'Termine l’appel avant de mettre à jour.', 'Termina la chiamata prima di aggiornare.'],
   // Traducción y PDF
   ['Traduciendo…', 'Translating…', 'Traduzindo…', 'Traduction…', 'Traduzione…'],
   ['Ver original', 'Show original', 'Ver original', 'Voir l’original', 'Mostra originale'],

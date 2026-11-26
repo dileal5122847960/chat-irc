@@ -5,6 +5,7 @@ import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, transl
 import { translate } from './translate.js';
 import { APP_NAME, logoSvg, flag } from './brand.js';
 import { createGroupCall } from './groupcall.js';
+import { APP_VERSION, startVersionCheck, registerDevice } from './version.js';
 
 setLang(initialLang());
 startI18n();
@@ -116,6 +117,7 @@ function renderNotice(title, html) {
 }
 
 async function boot() {
+  startVersionCheck({ supabase, t, isBusy: () => !!document.querySelector('.call-overlay') });
   connectLobby();
   const { data: { session } } = await supabase.auth.getSession();
   if (session && session.user.is_anonymous) await supabase.auth.signOut(); // restos del sistema anterior
@@ -302,7 +304,7 @@ function renderHome(message = '', kind = 'error') {
         <p class="muted small center note">Las conversaciones no se guardan: solo ves lo que se dice mientras estás conectado.</p>
       </aside>
     </main>
-    <footer class="landing-foot"><span class="ugc">© ${new Date().getFullYear()} ${APP_NAME}</span> · <a href="/privacidad.html">Privacidad</a> · <a href="/terminos.html">Condiciones</a></footer>
+    <footer class="landing-foot"><span class="ugc">© ${new Date().getFullYear()} ${APP_NAME} · v${APP_VERSION}</span> · <a href="/privacidad.html">Privacidad</a> · <a href="/terminos.html">Condiciones</a></footer>
   </div>`;
 
   root.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => { homeView = b.dataset.view; renderHome(); }));
@@ -536,6 +538,7 @@ function enterChat(nick, registered, channel) {
   state.nick = nick;
   state.registered = registered;
   loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
+  if (registered && state.account?.id) registerDevice(supabase, state.account.id); // versión que usa este dispositivo
   renderClient();
   activate('status');
   loadChannels().then(() => {
