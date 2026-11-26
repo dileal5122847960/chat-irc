@@ -63,6 +63,9 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
   `ANDROID_KEYSTORE_PASSWORD` (clave de firma: la tiene el dueño; **nunca cambiarla**), `GOOGLE_SERVICES_JSON`.
 - **Publicar versión de Android**: subir `androidVersion` en `package.json` → Actions → "App Android" → Run workflow (main) → el APK sale en Releases
   (`ChamuFlac.apk`) → actualizar la fila `android` de `app_versions` (`latest_version`, `download_url`, y `min_version` si es obligatoria).
+- **Amigos en la web** (`src/friends.js`): botón "Amigos" (con contador) junto al nick para cuentas registradas: agregar por
+  número, aceptar/rechazar, cancelar, eliminar, bloquear. Se consulta al entrar, cada 2 min y al volver a la pestaña.
+- Márgenes del sistema en la app: usar `var(--sat)` / `var(--sab)` (Capacitor 8 inyecta `--safe-area-inset-*`), no `env()` solo.
 - Limitaciones conocidas: ambos deben estar conectados (no hay mensajes diferidos); descargar archivos recibidos en el WebView puede
   no funcionar (pendiente: guardar con Filesystem/Share); llamada con pantalla completa sobre el bloqueo (ConnectionService) pendiente.
 
