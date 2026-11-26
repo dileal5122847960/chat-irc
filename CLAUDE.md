@@ -142,6 +142,8 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
 - **Traducción de mensajes:** `src/translate.js` (traductor integrado de Chrome con timeout; respaldo
   MyMemory). Cada mensaje viaja con su `lang`. **No se traduce sola** (decisión del dueño): se muestra el original y,
   si está en otro idioma, un botón «Traducir» (siempre al idioma elegido al entrar); mismo idioma → sin botón.
+  El `lang` de cada mensaje es el **idioma real del texto** (`detectLang()` en el dispositivo de quien escribe; si no está
+  claro, el de su interfaz). MyMemory traduce con `autodetect` como origen. Su cupo gratuito es por conexión (diario).
 - **Exportar a PDF:** imprime el log visible en un iframe ("Guardar como PDF").
 - **Marcas de lectura propias** (no ✓✓): una línea = enviado, dos = entregado, dos **verdes** = leído; reloj = enviando,
   ✕ roja = no enviado (iconos `line1`/`line2` en `src/common.js`, color `--read-mark`).

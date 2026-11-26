@@ -12,7 +12,7 @@
 
 import { EMOJI, STICKERS, stickerSvg } from './emoji.js';
 import { t, LANGS, getLang, translatedFrom } from './i18n.js';
-import { translate } from './translate.js';
+import { translate, detectLang } from './translate.js';
 
 const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo (conexión directa)
 const MAX_FILE_RELAY = 5 * 1024 * 1024; // 5 MB por archivo (plan B a través del servidor)
@@ -724,7 +724,7 @@ export function createDM(ctx) {
   /* ---------------- Enviar ---------------- */
   function sendText(w, text, kind = 'msg') {
     const mid = crypto.randomUUID();
-    const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: getLang() };
+    const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: detectLang(text) || getLang() }; // idioma real del texto
     const local = { mid, mine: true, kind: data.kind, text, ts: Date.now() };
     if (w.status !== 'open') return canMail(w) && sendViaMail(w, data, local);
     sendJSON(w, data);

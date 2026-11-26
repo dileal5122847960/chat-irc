@@ -2,7 +2,7 @@ import './style.css';
 import { supabase, configured, configError, SUPABASE_URL, SUPABASE_KEY } from './supabase.js';
 import { createDM, loadIceServers } from './dm.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, translatedFrom } from './i18n.js';
-import { translate } from './translate.js';
+import { translate, detectLang } from './translate.js';
 import { APP_NAME, logoSvg, flag } from './brand.js';
 import { createGroupCall } from './groupcall.js';
 import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw, beep, loopTone } from './common.js';
@@ -1071,7 +1071,7 @@ function sendMessage(body, kind = 'msg') {
   if (w.kind === 'dm') return dm.sendText(w, body.slice(0, 4000), kind);
   if (Date.now() - lastSend < 250) return toast('Más despacio: espera un momento entre mensajes.');
   lastSend = Date.now();
-  const m = { id: crypto.randomUUID().slice(0, 12), from: state.clientId, nick: state.nick, reg: state.registered, kind, body: body.slice(0, MAX_MSG), ts: Date.now(), lang: getLang() };
+  const m = { id: crypto.randomUUID().slice(0, 12), from: state.clientId, nick: state.nick, reg: state.registered, kind, body: body.slice(0, MAX_MSG), ts: Date.now(), lang: detectLang(body) || getLang() }; // idioma real del texto
   addMessage(w.key, m);
   w.rt.send({ type: 'broadcast', event: 'msg', payload: m }).then((r) => {
     if (r !== 'ok') sys(w.key, 'No se pudo enviar el último mensaje (conexión inestable).', 'err');
