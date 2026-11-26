@@ -753,3 +753,5 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .call-overlay.dm-call.speaking .call-peer .avatar { box-shadow: 0 0 0 6px rgba(52, 211, 153, .85), 0 0 30px rgba(52, 211, 153, .6); }
 .call-overlay.dm-call.speaking.has-video { box-shadow: inset 0 0 0 4px rgba(52, 211, 153, .9); }
 .call-overlay.dm-call.speaking .call-peer h2::after { content: ' 🔊'; }
+.name-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 400px) { .name-row { grid-template-columns: 1fr; } }

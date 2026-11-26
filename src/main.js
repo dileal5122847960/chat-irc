@@ -125,8 +125,13 @@ async function boot() {
 }
 /** Carga el perfil de la cuenta. Si aún no tiene nick, queda pendiente de elegirlo. */
 async function loadAccount(user) {
-  const { data: profile } = await supabase.from('profiles').select('nick').eq('id', user.id).maybeSingle();
-  if (profile) { state.account = { id: user.id, nick: profile.nick, email: user.email }; state.pendingUser = null; return true; }
+  const { data } = await supabase.rpc('my_account');
+  const profile = Array.isArray(data) ? data[0] : data;
+  if (profile?.nick) {
+    state.account = { id: user.id, user, nick: profile.nick, email: user.email, number: profile.user_number, firstName: profile.first_name || '', lastName: profile.last_name || '' };
+    state.pendingUser = null;
+    return true;
+  }
   state.account = null;
   state.pendingUser = user;
   return false;
@@ -205,6 +210,17 @@ function linkedChannel() {
 }
 const nickField = (v) => `<label for="nick">Nick</label>
   <div class="field"><span>@</span><input id="nick" name="nick" value="${esc(v)}" maxlength="20" autocomplete="nickname" autocapitalize="none" spellcheck="false" placeholder="tu_nick" required></div>`;
+/** Nombre y apellido sugeridos a partir de la cuenta de Google (si los trae). */
+function suggestNames(user) {
+  const m = user?.user_metadata || {};
+  const full = (m.full_name || m.name || '').trim().split(/\s+/);
+  return { first: m.given_name || (full.length > 1 ? full.slice(0, -1).join(' ') : full[0] || ''), last: m.family_name || (full.length > 1 ? full.at(-1) : '') };
+}
+const nameFields = (first = '', last = '') => `<div class="name-row">
+  <div><label for="first_name">Nombre</label><div class="field"><input id="first_name" name="first_name" value="${esc(first)}" maxlength="60" autocomplete="given-name" required></div></div>
+  <div><label for="last_name">Apellido</label><div class="field"><input id="last_name" name="last_name" value="${esc(last)}" maxlength="60" autocomplete="family-name" required></div></div>
+</div>`;
+const fmtNumber = (n) => String(n || '').replace(/(\d{4})(\d{4})/, '$1 $2');
 const googleBtn = `<button type="button" class="btn google block" id="google-btn">${GOOGLE_SVG} Continuar con Google</button>`;
 
 /** Propone un nick válido a partir del nombre o el correo de la cuenta. */
@@ -220,14 +236,21 @@ function renderHome(message = '', kind = 'error') {
   state.nick = null;
   const msg = `<p class="${message ? kind : 'error'}" role="alert">${message}</p>`;
   let body;
-  if (state.account) {
+  if (state.account && (!state.account.firstName || !state.account.lastName)) {
+    // Cuenta sin nombre y apellido (creada antes de que fueran obligatorios)
+    const sug = suggestNames(state.account.user);
     body = `<div class="welcome-back">${avatar(state.account.nick)}<div><b>Hola, ${esc(state.account.nick)} ${verified}</b><small class="muted">${esc(state.account.email || '')}</small></div></div>
+      <p class="lead">Completa tu nombre y apellido para continuar. Solo los verán tus amigos.</p>
+      <form id="home-form" data-mode="names">${nameFields(sug.first, sug.last)}${msg}<button class="btn primary block" type="submit">Guardar y entrar</button></form>
+      <button class="btn ghost block" id="logout-btn">${icon('logout')} Cerrar sesión</button>`;
+  } else if (state.account) {
+    body = `<div class="welcome-back">${avatar(state.account.nick)}<div><b>Hola, ${esc(state.account.nick)} ${verified}</b><small class="muted">${esc(state.account.email || '')}${state.account.number ? ` · Nº <span class="ugc">${fmtNumber(state.account.number)}</span>` : ''}</small></div></div>
       <form id="home-form">${msg}<button class="btn primary block" type="submit">Entrar al chat</button></form>
       <button class="btn ghost block" id="logout-btn">${icon('logout')} Cerrar sesión</button>`;
   } else if (state.pendingUser) {
     body = `<div class="welcome-back"><span class="avatar">${icon('check')}</span><div><b>Sesión iniciada</b><small class="muted">${esc(state.pendingUser.email || '')}</small></div></div>
       <p class="lead">Elige el nick que quieres reservar. Será solo tuyo.</p>
-      <form id="home-form">${nickField(suggestNick(state.pendingUser))}${msg}<button class="btn primary block" type="submit">Reservar nick y entrar</button></form>
+      <form id="home-form">${nickField(suggestNick(state.pendingUser))}${nameFields(suggestNames(state.pendingUser).first, suggestNames(state.pendingUser).last)}${msg}<button class="btn primary block" type="submit">Reservar nick y entrar</button></form>
       <button class="btn ghost block" id="logout-btn">${icon('logout')} Usar otra cuenta</button>`;
   } else if (homeView === 'guest') {
     body = `<form id="home-form">${nickField(store.get('lastNick'))}${msg}<button class="btn primary block" type="submit">Entrar al chat</button></form>
@@ -242,7 +265,7 @@ function renderHome(message = '', kind = 'error') {
       <h2 class="view-title">${isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</h2>
       ${googleBtn}
       <div class="divider"><span>o con tu correo</span></div>
-      <form id="home-form">${isLogin ? email + pass : nickField('') + email + pass + '<p class="hint">Tu nick quedará reservado: nadie más podrá usarlo.</p>'}${msg}
+      <form id="home-form">${isLogin ? email + pass : nickField('') + nameFields() + email + pass + '<p class="hint">Tu nick quedará reservado: nadie más podrá usarlo. Tu nombre y apellido solo los verán tus amigos.</p>'}${msg}
         <button class="btn primary block" type="submit">${isLogin ? 'Iniciar sesión' : 'Crear cuenta'}</button></form>
       <p class="alt-links">${isLogin ? '¿No tienes cuenta? <button type="button" class="link" data-view="register">Crear cuenta</button>' : '¿Ya tienes cuenta? <button type="button" class="link" data-view="login">Iniciar sesión</button>'}</p>`;
   }
@@ -328,6 +351,14 @@ async function submitHome(form) {
   const channel = linkedChannel();
 
   try {
+    const names = form.first_name ? { first: form.first_name.value.trim(), last: form.last_name.value.trim() } : null;
+    if (names && (!names.first || !names.last)) return fail(esc(t('Escribe tu nombre y apellido.')));
+    // Cuenta sin nombre: guardarlo
+    if (state.account && form.dataset.mode === 'names') {
+      const { error } = await supabase.rpc('set_my_name', { p_first: names.first, p_last: names.last });
+      if (error) return fail(esc(error.message));
+      state.account.firstName = names.first; state.account.lastName = names.last;
+    }
     // Con sesión y nick: entrar
     if (state.account) {
       const problem = await nickProblem(state.account.nick, { forAccount: state.account.id });
@@ -341,8 +372,10 @@ async function submitHome(form) {
       if (problem) return fail(esc(problem));
       const { data, error } = await supabase.rpc('claim_nick', { p_nick: nick });
       if (error) return fail(error.code === '23505' ? `El nick ${esc(nick)} acaba de ser reservado por otra persona.` : error.code === '23514' ? 'Ese nick no es válido.' : esc(error.message));
-      state.account = { id: state.pendingUser.id, nick: data || nick, email: state.pendingUser.email };
-      state.pendingUser = null;
+      await supabase.rpc('set_my_name', { p_first: names.first, p_last: names.last });
+      const user = state.pendingUser;
+      await loadAccount(user);
+      state.account ||= { id: user.id, nick: data || nick, email: user.email };
       return enterChat(state.account.nick, true, channel);
     }
     // Invitado
@@ -367,7 +400,7 @@ async function submitHome(form) {
       if (problem) return fail(esc(problem));
       const { data, error } = await supabase.auth.signUp({
         email: form.email.value.trim(), password: form.password.value,
-        options: { data: { nick }, emailRedirectTo: location.origin + '/' },
+        options: { data: { nick, first_name: names.first, last_name: names.last }, emailRedirectTo: location.origin + '/' },
       });
       if (error) return fail(/already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : esc(error.message));
       store.set('lastNick', nick);
@@ -1258,15 +1291,35 @@ function channelMenu(anchor) {
   openMenu(anchor, items, { title: `<span><b>${esc(w.name)}</b><small>${w.ch.owner_id ? (iAmOwner(w) ? 'Tu canal' : iAmAdmin(w) ? 'Eres administrador' : 'Canal de usuario') : 'Canal del sistema'}</small></span>` });
 }
 function userMenu(anchor) {
-  const items = [
+  const acc = state.registered ? state.account : null;
+  const items = [];
+  if (acc?.number) items.push({ label: 'Mi número', html: `<span>${esc(t('Mi número'))}: <b class="ugc">${fmtNumber(acc.number)}</b></span>`, hint: 'Tócalo para copiarlo y compartirlo con tus amigos', icon: 'hash', onClick: () => navigator.clipboard?.writeText(String(acc.number)).then(() => toast(t('Número copiado'))) });
+  if (acc) items.push({ label: 'Nombre y apellido', hint: acc.firstName ? `${acc.firstName} ${acc.lastName}` : '', icon: 'users', onClick: editNameDialog });
+  items.push(
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
     { label: document.documentElement.dataset.theme === 'dark' ? 'Tema claro' : 'Tema oscuro', icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', onClick: toggleTheme },
     { label: 'Idioma', html: `<span class="lang-opt">${esc(t('Idioma'))}: ${flag(getLang())}<span class="ugc">${esc(LANGS[getLang()])}</span></span>`, icon: 'globe', onClick: () => languageMenu(anchor) },
-  ];
+  );
   if (state.registered && !myOwnChannel()) items.push({ label: 'Crear mi canal', icon: 'plus', onClick: () => { activate('status'); createChannelDialog(); } });
   items.push('-', { label: 'Salir del chat', icon: 'logout', onClick: quitChat });
   if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
   openMenu(anchor, items, { title: `${avatar(state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
+}
+
+async function editNameDialog() {
+  const acc = state.account;
+  const v = await openDialog({
+    title: 'Nombre y apellido',
+    text: esc(t('Solo los verán tus amigos.')),
+    fields: [{ name: 'first', label: 'Nombre', value: acc.firstName, max: 60 }, { name: 'last', label: 'Apellido', value: acc.lastName, max: 60 }],
+    confirm: 'Guardar',
+    validate: async ({ first, last }) => (!first || !last ? t('Escribe tu nombre y apellido.') : ''),
+  });
+  if (!v) return;
+  const { error } = await supabase.rpc('set_my_name', { p_first: v.first, p_last: v.last });
+  if (error) return toast(error.message);
+  acc.firstName = v.first; acc.lastName = v.last;
+  toast(t('Guardado.'));
 }
 
 function languageMenu(anchor) {

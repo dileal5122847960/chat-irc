@@ -27,6 +27,24 @@ para soportar gran demanda**. Por eso:
 - Antes de abrir al público: seguridad del tiempo real (canales privados/RLS), límites de envío,
   captcha, bloqueos y moderación.
 
+## Apps futuras (móvil y Windows) — decisión del dueño
+
+Más adelante habrá **app de móvil** y **app de escritorio para Windows**, centradas en los
+**privados entre amigos** (conexión punto a punto). La base de datos ya se prepara para ellas
+(migración `0007`):
+- **`profiles.user_number`**: número **aleatorio de 8 dígitos** para buscarse/agregarse. Las relaciones
+  usan este número (bigint) en lugar del uuid. No es listable en bloque (solo `id, nick` son públicos).
+- **`user_private`**: nombre y apellido (**obligatorios** al registrarse; visibles **solo para amigos**).
+  El correo NO se duplica: vive en `auth.users`. Leer con `my_account()`, escribir con `set_my_name()`.
+- **`devices`**: plataforma, token push (para que suene con la app cerrada), clave pública de identidad
+  (E2E verificable). Sin IPs: la conexión se negocia en el momento (ICE/STUN/TURN).
+- **`friendships`**: pendiente/aceptada/bloqueada, solo vía funciones: `find_user`, `list_friends`,
+  `send_friend_request`, `respond_friend_request`, `remove_friend`, `block_user`.
+- Plan de señalización para las apps: canal por **número de usuario** (`user:<número>`) en lugar del
+  `clientId` de la pestaña → **requiere activar Realtime Authorization** (canales privados con RLS) para
+  que solo el dueño escuche su canal. Push nativo: FCM (Android/Windows) / APNs-PushKit (iOS).
+- Las apps nativas podrían hacerse con Capacitor o React Native reutilizando `src/dm.js`.
+
 ## Arquitectura
 
 - **Frontend:** Vite + JavaScript sin framework (`src/`). `npm run dev` / `npm run build`.
@@ -63,7 +81,7 @@ para soportar gran demanda**. Por eso:
 
 ## Configuración externa (ya hecha)
 
-- Supabase: migraciones `0001`–`0006` aplicadas (ver `supabase/migrations/`). Auth: email activado,
+- Supabase: migraciones `0001`–`0006` aplicadas (`0007` pendiente de ejecutar al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
   "Confirm email" desactivado, anónimos desactivados, Google activado. Site URL = la de Vercel.
 - Google Cloud: cliente OAuth "Chat IRC" (proyecto "My First Project"), app publicada.
 - Vercel: proyecto `chat-irc` conectado a GitHub (despliegue automático desde `main`).
