@@ -77,19 +77,21 @@ Deno.serve(async (req) => {
     const data = { kind, id, from: String(targets[0].sender_number), nick, video: video ? '1' : '0', ts: String(Date.now()) };
 
     let sent = 0;
+    const failed: string[] = [];
     for (const t of targets) {
       const r = await sendFcm(t.token, title, text, data, kind);
-      if (r === 'ok') sent++;
+      if (r === 'ok') { sent++; continue; }
+      failed.push(r);
       if (r === 'gone') {
         // Token caducado (app desinstalada…): se borra
-        await fetch(`${SUPABASE_URL}/rest/v1/devices?push_token=eq.${encodeURIComponent(t.token)}`, {
-          method: 'PATCH',
+        await fetch(`${SUPABASE_URL}/rest/v1/rpc/forget_push_token`, {
+          method: 'POST',
           headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ push_token: null }),
+          body: JSON.stringify({ p_token: t.token }),
         });
       }
     }
-    return json({ sent });
+    return json({ sent, failed });
   } catch (e) {
     return json({ error: String((e as Error)?.message ?? e) }, 500);
   }
@@ -127,7 +129,7 @@ async function sendFcm(token: string, title: string, body: string, data: Record<
   const err = await res.text();
   if (res.status === 404 || /UNREGISTERED|INVALID_ARGUMENT/.test(err)) return 'gone';
   console.error('FCM', res.status, err);
-  return 'error';
+  return `error ${res.status} ${(err.match(/"status":\s*"([A-Z_]+)"/) || [])[1] || ''}`.trim();
 }
 
 /** Token de acceso de Google firmando un JWT con la clave de la cuenta de servicio. */
