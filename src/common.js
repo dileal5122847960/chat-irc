@@ -5,6 +5,8 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 
 /* ---------- Iconos ---------- */
 const I = {
+  line1: '<path d="M5 12h14"/>',
+  line2: '<path d="M5 9h14M5 15h14"/>',
   clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   'user-plus': '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/>',

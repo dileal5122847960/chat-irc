@@ -436,10 +436,10 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 
 /* ===== Privados con estilo de app de mensajería ===== */
 :root, :root[data-theme="dark"] {
-  --dm-bg: #0b141a; --dm-pattern: rgba(255, 255, 255, .03); --bub-in: #202c33; --bub-out: #005c4b; --dm-accent: #21c08f; --dm-meta: rgba(233, 237, 239, .6); --read: #53bdeb;
+  --dm-bg: #0b141a; --dm-pattern: rgba(255, 255, 255, .03); --bub-in: #202c33; --bub-out: #005c4b; --dm-accent: #21c08f; --dm-meta: rgba(233, 237, 239, .6); --read: #53bdeb; --read-mark: #4ade80;
 }
 :root[data-theme="light"] {
-  --dm-bg: #efeae2; --dm-pattern: rgba(0, 0, 0, .045); --bub-in: #ffffff; --bub-out: #d9fdd3; --dm-accent: #0e8f6c; --dm-meta: #667781; --read: #2a9df4;
+  --dm-bg: #efeae2; --dm-pattern: rgba(0, 0, 0, .045); --bub-in: #ffffff; --bub-out: #d9fdd3; --dm-accent: #0e8f6c; --dm-meta: #667781; --read: #2a9df4; --read-mark: #16a34a;
 }
 .app.in-dm .log {
   background-color: var(--dm-bg);
@@ -477,8 +477,12 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .bmeta { float: right; display: inline-flex; align-items: center; gap: 3px; font-size: .68rem; color: var(--dm-meta); margin: 4px 0 -4px 8px; position: relative; top: 1px; white-space: nowrap; }
 .btext + .bmeta { margin-top: -15px; }
 .tick { display: inline-flex; }
-.tick .ico { width: 16px; height: 16px; }
-.tick.read { color: var(--read); }
+.tick .ico { width: 16px; height: 16px; stroke-width: 2.6; }
+/* Marcas propias de ChamuFlac: una línea = enviado, dos = entregado, dos verdes = leído */
+.tick.queued, .tick.sent { color: var(--dm-meta); opacity: .75; }
+.tick.delivered { color: var(--dm-meta); }
+.tick.read { color: var(--read-mark); }
+.tick.failed { color: var(--danger); }
 .bub-row.emoji-only .bubble, .bub-row.sticker-msg .bubble { background: none !important; box-shadow: none; padding: 0; }
 .bub-row.emoji-only .bubble::before, .bub-row.sticker-msg .bubble::before { display: none; }
 .big-emoji { font-size: 3rem; line-height: 1.15; }
@@ -495,7 +499,7 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .media-ph > * { grid-area: 1 / 1; }
 .media-ph .ico { width: 48px; height: 48px; opacity: .35; }
 .bub-row.media-msg .bmeta { position: absolute; right: 10px; bottom: 9px; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .7); margin: 0; float: none; }
-.bub-row.media-msg .tick.read { color: #8fd0ff; }
+.bub-row.media-msg .tick.read { color: #6ee7a0; }
 
 .progress-ring { --p: 0; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--dm-accent) calc(var(--p) * 1%), rgba(0, 0, 0, .25) 0); }
 .progress-ring span { width: 36px; height: 36px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; font-size: .62rem; font-weight: 700; display: grid; place-items: center; }
@@ -779,3 +783,9 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .fr-main b, .fr-main small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fr-main small { color: var(--muted); font-size: .78rem; }
 .friends-dialog .hint { margin: 14px 0 0; font-size: .8rem; color: var(--faint); }
+
+/* Traducción a pedido */
+.tr-do { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; font-size: .74rem; font-weight: 600; color: var(--accent-2); vertical-align: 1px; opacity: .85; }
+.tr-do .ico { width: 13px; height: 13px; }
+.tr-do:hover { opacity: 1; text-decoration: underline; }
+.app.in-dm .tr-do { color: var(--dm-accent); display: flex; margin: 3px 0 0; }

@@ -140,8 +140,11 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   las personas va marcado con `.ugc` (u otros selectores de `SKIP`) para no traducirlo.
   **Al añadir textos de interfaz, añadir su traducción a `ENTRIES` en los 5 idiomas.**
 - **Traducción de mensajes:** `src/translate.js` (traductor integrado de Chrome con timeout; respaldo
-  MyMemory). Cada mensaje viaja con su `lang`.
+  MyMemory). Cada mensaje viaja con su `lang`. **No se traduce sola** (decisión del dueño): se muestra el original y,
+  si está en otro idioma, un botón «Traducir» (siempre al idioma elegido al entrar); mismo idioma → sin botón.
 - **Exportar a PDF:** imprime el log visible en un iframe ("Guardar como PDF").
+- **Marcas de lectura propias** (no ✓✓): una línea = enviado, dos = entregado, dos **verdes** = leído; reloj = enviando,
+  ✕ roja = no enviado (iconos `line1`/`line2` en `src/common.js`, color `--read-mark`).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).

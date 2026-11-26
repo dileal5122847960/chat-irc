@@ -427,6 +427,8 @@ const ENTRIES = [
   ['No se pudo descifrar un mensaje guardado (quizá se borraron los datos de la app).', 'A stored message could not be decrypted (the app data may have been cleared).', 'Não foi possível descriptografar uma mensagem guardada (talvez os dados do app tenham sido apagados).', 'Impossible de déchiffrer un message stocké (les données de l’app ont peut-être été effacées).', 'Impossibile decifrare un messaggio salvato (forse i dati dell’app sono stati cancellati).'],
   ['Enviando…', 'Sending…', 'Enviando…', 'Envoi…', 'Invio…'],
   ['No enviado', 'Not sent', 'Não enviado', 'Non envoyé', 'Non inviato'],
+  ['Traducir', 'Translate', 'Traduzir', 'Traduire', 'Traduci'],
+  ['No se pudo traducir · Reintentar', 'Could not translate · Retry', 'Não foi possível traduzir · Tentar de novo', 'Traduction impossible · Réessayer', 'Impossibile tradurre · Riprova'],
 ];
 
 // Textos con partes variables: [expresión regular sobre el español, inglés, portugués, francés, italiano]

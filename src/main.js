@@ -704,7 +704,11 @@ function avatarWithRole(nick, role, extra = '') { return `<span class="av-wrap $
 function roleBadge(w, p) { const r = roleOf(w, p); return r ? `<span class="role-inline ${r}" title="${ROLE_TITLE[r]}">${CROWN_SVG}</span>` : ''; }
 /* ---------- Traducción de mensajes ---------- */
 const needsTranslation = (m) => !!m.lang && m.lang !== getLang() && m.from !== state.clientId && LANGS[m.lang] && typeof m.body === 'string' && m.body.trim().length > 0;
+// No se traduce sola: se muestra el original y, si está en otro idioma, el botón «Traducir»
+// (siempre al idioma elegido al entrar). Mismo idioma → no hay botón.
+const trSources = new Map(); // id → { key, body, lang }
 function trInner(st, orig, src, translated) {
+  if (st === 'offer' || st === 'fail') return `${linkify(orig)} <button type="button" class="tr-do" data-ch-tr>${icon('translate')}${esc(t(st === 'fail' ? 'No se pudo traducir · Reintentar' : 'Traducir'))}</button>`;
   if (st === 'pending') return `${linkify(orig)} <small class="tr-note">${esc(t('Traduciendo…'))}</small>`;
   if (st === 'done') return `<span class="tr-text">${linkify(translated)}</span><span class="tr-orig hidden">${linkify(orig)}</span> <button type="button" class="tr-toggle" data-src="${esc(src)}">${icon('translate')}${esc(translatedFrom(src))} · ${esc(t('Ver original'))}</button>`;
   return linkify(orig);
@@ -724,10 +728,19 @@ function replaceTr(key, id, inner) {
   const el = document.querySelector(`#log [data-tr="${CSS.escape(id)}"]`);
   if (el) el.innerHTML = `<!--a-->${inner}<!--z-->`;
 }
-async function translateMessage(key, m) {
-  const r = await translate(m.body, m.lang, getLang());
-  replaceTr(key, m.trId, r ? trInner('done', m.body, m.lang, r.text) : trInner('fail', m.body));
+async function translateMessage(id) {
+  const src = trSources.get(id);
+  if (!src || src.busy) return;
+  src.busy = true;
+  replaceTr(src.key, id, trInner('pending', src.body));
+  const r = await translate(src.body, src.lang, getLang());
+  src.busy = false;
+  replaceTr(src.key, id, r ? trInner('done', src.body, src.lang, r.text) : trInner('fail', src.body));
 }
+document.addEventListener('click', (e) => {
+  const d = e.target.closest('[data-ch-tr]');
+  if (d) return translateMessage(d.closest('.tr-wrap')?.dataset.tr);
+});
 document.addEventListener('click', (e) => {
   const b = e.target.closest('.tr-toggle');
   if (!b) return;
@@ -741,8 +754,8 @@ document.addEventListener('click', (e) => {
 function formatMessage(w, m) {
   const mention = mentionsMe(m);
   const tr = needsTranslation(m);
-  if (tr) m.trId = 'tr' + Math.random().toString(36).slice(2, 10);
-  const bodyHtml = tr ? trWrap(m.trId, trInner('pending', m.body)) : linkify(m.body);
+  if (tr) { m.trId = 'tr' + Math.random().toString(36).slice(2, 10); trSources.set(m.trId, { key: w.key, body: m.body, lang: m.lang }); if (trSources.size > 2000) trSources.delete(trSources.keys().next().value); }
+  const bodyHtml = tr ? trWrap(m.trId, trInner('offer', m.body)) : linkify(m.body);
   const p = w.people.get(m.from);
   const role = roleOf(w, p);
   const nickHtml = `<b class="nick" style="${nickStyle(m.nick)}">${esc(m.nick)}</b>${m.reg ? verified : ''}`;
@@ -777,7 +790,6 @@ function addMessage(key, m) {
   const w = state.windows.get(key);
   if (!w) return;
   addHtml(key, formatMessage(w, m), { count: m.from !== state.clientId, mention: mentionsMe(m) });
-  if (m.trId) translateMessage(key, m);
 }
 function sys(key, html, kind = 'info') {
   const w = state.windows.get(key);
@@ -1380,7 +1392,7 @@ async function exportPdf(w) {
       .pdf-head h1 { margin: 0 0 4px; font-size: 20px; color: #171a21; }
       .pdf-head p { margin: 2px 0; color: #5f6678; font-size: 12px; }
       .pdf-foot { margin-top: 18px; padding-top: 8px; border-top: 1px solid #ddd; color: #5f6678; font-size: 11px; font-family: system-ui, sans-serif; }
-      .tr-toggle, .voice-play, .voice-speed, .browser, .tr-note { display: none !important; }
+      .tr-toggle, .tr-do, .voice-play, .voice-speed, .browser, .tr-note { display: none !important; }
       .tr-orig.hidden { display: block !important; color: #5f6678; font-size: .85em; font-style: italic; }
       .tr-orig.hidden::before { content: '↳ '; }
       .tr-text.hidden { display: inline !important; }

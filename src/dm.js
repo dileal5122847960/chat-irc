@@ -487,12 +487,8 @@ export function createDM(ctx) {
     switch (m.t) {
       case 'text': {
         const msg = { mid: safeId(m.mid), mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now(), lang: LANGS[m.lang] ? m.lang : null };
-        if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'pending';
+        if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'offer'; // se traduce solo si se pide
         addMessage(w, msg); receipt(w, msg.mid);
-        if (msg.tr) translate(msg.text, msg.lang, getLang()).then((r) => {
-          msg.tr = r ? 'done' : 'fail'; msg.trText = r?.text;
-          rerender(w, msg.mid);
-        });
         return;
       }
       case 'sticker': {
@@ -578,7 +574,7 @@ export function createDM(ctx) {
     m.tick = st;
     rerender(w, mid);
   }
-  const tickHtml = (m) => `<span class="tick ${m.tick || 'sent'}" title="${{ queued: 'Enviando…', failed: 'No enviado', sent: 'Enviado', delivered: 'Entregado', read: 'Leído' }[m.tick || 'sent']}">${icon({ queued: 'clock', failed: 'x', delivered: 'check2', read: 'check2' }[m.tick] || 'check')}</span>`;
+  const tickHtml = (m) => `<span class="tick ${m.tick || 'sent'}" title="${{ queued: 'Enviando…', failed: 'No enviado', sent: 'Enviado', delivered: 'Entregado', read: 'Leído' }[m.tick || 'sent']}">${icon({ queued: 'clock', failed: 'x', delivered: 'line2', read: 'line2' }[m.tick] || 'line1')}</span>`;
 
   /* ---------------- Burbujas ---------------- */
   function addMessage(w, m) {
@@ -610,12 +606,25 @@ export function createDM(ctx) {
     }
     return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls}" id="m-${m.mid}"><div class="bubble">${body}${meta}</div></div>`;
   }
-  /** Cuerpo de texto, traducido si llegó en otro idioma (con opción de ver el original). */
+  /**
+   * Cuerpo de texto. Siempre se muestra el original; si llegó en otro idioma distinto del
+   * elegido al entrar, se ofrece «Traducir» (siempre a ese idioma) y luego «Ver original».
+   */
   function trBody(m) {
+    if (m.tr === 'offer' || m.tr === 'fail') return `<span class="tr-wrap">${linkify(m.text)}${m.lang !== getLang() ? ` <button type="button" class="tr-do" data-dm-tr="${esc(m.mid)}">${icon('translate')}${esc(t(m.tr === 'fail' ? 'No se pudo traducir · Reintentar' : 'Traducir'))}</button>` : ''}</span>`;
     if (m.tr === 'pending') return `<span class="tr-wrap">${linkify(m.text)} <small class="tr-note">${esc(t('Traduciendo…'))}</small></span>`;
     if (m.tr === 'done') return `<span class="tr-wrap"><span class="tr-text">${linkify(m.trText)}</span><span class="tr-orig hidden">${linkify(m.text)}</span> <button type="button" class="tr-toggle" data-src="${esc(m.lang)}">${icon('translate')}${esc(translatedFrom(m.lang))} · ${esc(t('Ver original'))}</button></span>`;
     return linkify(m.text);
   }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-dm-tr]');
+    if (!b) return;
+    const w = state.windows.get(state.active);
+    const m = w?.msgs.get(b.dataset.dmTr);
+    if (!m || m.tr === 'pending') return;
+    m.tr = 'pending'; rerender(w, m.mid);
+    translate(m.text, m.lang, getLang()).then((r) => { m.tr = r ? 'done' : 'fail'; m.trText = r?.text; rerender(w, m.mid); });
+  });
   /** Vuelve a pintar un mensaje (al terminar una transferencia o cambiar la marca de lectura). */
   function rerender(w, mid) {
     const m = w.msgs.get(mid);
@@ -763,9 +772,8 @@ export function createDM(ctx) {
       const ts = Math.min(Number(m.ts) || Date.parse(it.at) || Date.now(), Date.now());
       if (m.t === 'text') {
         const msg = { mid, mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts, lang: LANGS[m.lang] ? m.lang : null };
-        if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'pending';
+        if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'offer'; // se traduce solo si se pide
         addMessage(w, msg);
-        if (msg.tr) translate(msg.text, msg.lang, getLang()).then((r) => { msg.tr = r ? 'done' : 'fail'; msg.trText = r?.text; rerender(w, mid); });
       } else if (m.t === 'sticker' && STICKERS.includes(m.id)) {
         addMessage(w, { mid, mine: false, kind: 'sticker', sticker: m.id, ts });
       } else continue;
