@@ -184,18 +184,39 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
 - El entorno de pruebas solo permite salir a `whvunvvspnbhwddesjqz.supabase.co` y
   `api.mymemory.translated.net`; el tráfico TURN no se puede probar desde aquí.
 
-## Pendiente (al 25-11-2026)
+## Estado al 26-11-2026 (para retomar)
 
-1. **Probar privado y videollamada entre dos redes distintas** (Wi-Fi vs datos móviles): ver si
-   sale "cifrado de extremo a extremo" (directo/TURN) o "vía servidor" (plan B). Revisar consumo en
-   Metered → Usage analytics.
-2. Rotar el **secreto de cliente de Google** (quedó visible en una captura del chat).
-3. Borrar **cuentas de prueba** en Supabase → Authentication → Users (`@chatirc-prueba.dev`,
-   `testreg8569`).
-4. Preguntar si se cambia el **correo de contacto** de `public/privacidad.html` y `public/terminos.html`.
-5. Recomendar **2FA** en GitHub, Vercel, Supabase, Google, Metered, Cloudflare.
-6. Opcional: renombrar el dominio a `chamuflac.vercel.app` (actualizar Site URL de Supabase, el cliente
-   OAuth de Google y la lista `ALLOWED` de la función `turn`).
+**Publicado y funcionando:** web (main) · **Android 1.0.5** · **Windows 1.0.1** (Releases). `app_versions`: android
+latest 1.0.5 / min 1.0.3; windows latest 1.0.1 / min 1.0.0; web 1.0.0. Migraciones 0001–0012 aplicadas (0012 = fila windows).
+Funciones `turn` y `push` desplegadas (push con tipo `msg`, `forget_push_token`). Firebase y firma de Android configurados.
+
+**Hecho el 26-11:** app Android (amigos, privados, buzón cifrado, avisos push), amigos en la web, chat app ↔ web, sin pedir
+permiso entre amigos, mensajes sin conexión, marcas de lectura con líneas (bordó/azul/verde), traducción a pedido desde
+el idioma real, chat limpio sin avisos de conexión, último mensaje siempre visible, app Windows (Electron, bandeja,
+auto-actualización), foto de perfil en privados (sin servidor), tamaño de letra y fondo del chat.
+
+**Esperando respuesta del dueño (lo estaba probando):**
+- Windows: ¿la **actualización automática** 1.0.0 → 1.0.1 descarga, instala y reabre sola? ¿Bandeja, avisos de Windows,
+  inicio con Windows y vuelta de "Continuar con Google" funcionan en su PC? (no se pudo probar desde aquí).
+- Android 1.0.5: foto de perfil entre dos teléfonos reales; marcas de lectura; avisos push con la app cerrada; audio en
+  llamadas (pendiente desde el principio: "se ve pero no se escucha" en Android Chrome).
+
+**Forma de publicar (recordatorio):** el clasificador exige que el dueño diga explícitamente "sí, publica en main" antes de
+cada push a `main` → trabajar en rama, probar, pedir permiso. No puedo crear etiquetas ni lanzar Actions: el dueño pulsa
+"Run workflow" (App Android / App Windows) y luego ejecuta el SQL de `app_versions` (dárselo listo, **después** de que el
+archivo esté en Releases). Subir `androidVersion` / `windowsVersion` en package.json en cada cambio de app.
+
+**Pendiente / ideas siguientes:**
+1. Probar privado y videollamada entre redes distintas (Wi-Fi vs datos) y revisar consumo en Metered.
+2. App de iPhone (necesita cuenta Apple Developer 99 USD/año; ver sección iOS).
+3. Guardar/descargar archivos recibidos en la app (Android WebView no descarga `blob:`): usar Filesystem/Share.
+4. Llamadas con la app cerrada a pantalla completa (Android ConnectionService / iOS CallKit).
+5. Seguridad antes de abrir al público: canales generales por RLS, límites de envío, captcha, bloqueos/moderación.
+6. Rotar el **secreto de cliente de Google**; borrar **cuentas de prueba** (`@chatirc-prueba.dev`: amigo3200 =
+   71865043, dueno7488 = 70005962; `testreg8569`) y sus dispositivos; recomendar **2FA** en todas las cuentas.
+7. Preguntar si se cambia el correo de contacto de `public/privacidad.html` y `public/terminos.html`.
+8. Opcional: dominio `chamuflac.vercel.app`; certificado de firma de código para Windows (quita el aviso SmartScreen);
+   traductor de pago cuando haya muchos usuarios (MyMemory tiene cupo diario por conexión).
 
 ## Ideas propuestas (no hechas)
 
