@@ -9,6 +9,24 @@ El usuario (dueño del proyecto) habla **español** (Argentina, GMT-3): responde
 - **Supabase:** proyecto `whvunvvspnbhwddesjqz` (plan Free). URL y clave *publishable* son públicas
   y están en `src/supabase.js`. **Nunca** poner en el código claves `secret`/`service_role`.
 
+## Objetivo y escalabilidad (decisión del dueño)
+
+Fase actual: **todo funcional con planes gratuitos**. Fase siguiente: **migrar a servicios de pago
+para soportar gran demanda**. Por eso:
+- Cada servicio externo va detrás de su propio módulo/función para poder cambiar de proveedor sin
+  rehacer la app (ya: TURN en la función `turn`, traducción en `src/translate.js`; pendiente:
+  abstraer el transporte de tiempo real para poder salir de Supabase Realtime).
+- Puntos que se quedarán cortos primero y su reemplazo previsto:
+  - Realtime Supabase Free (~200 conexiones, 2 M mensajes/mes) → Supabase Pro + ampliaciones, o
+    Ably/Pusher/Centrifugo.
+  - Videollamada grupal en malla (~6 personas) → SFU (LiveKit Cloud o Cloudflare Realtime SFU).
+  - TURN Metered 500 MB/mes → Cloudflare TURN o Metered de pago (solo cambiar secretos de `turn`).
+  - Traducción Chrome/MyMemory → Google Translate o DeepL vía Edge Function con caché.
+  - Vercel Hobby **no permite uso comercial** → Vercel Pro o Cloudflare Pages.
+  - Supabase Free (500 MB, 50k MAU, pausa tras 7 días inactivo) → Supabase Pro.
+- Antes de abrir al público: seguridad del tiempo real (canales privados/RLS), límites de envío,
+  captcha, bloqueos y moderación.
+
 ## Arquitectura
 
 - **Frontend:** Vite + JavaScript sin framework (`src/`). `npm run dev` / `npm run build`.
