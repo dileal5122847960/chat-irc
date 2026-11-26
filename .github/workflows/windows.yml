@@ -1,0 +1,67 @@
+# Compila la app de Windows (instalador ChamuFlac-Setup.exe) en GitHub.
+# • Publicar una versión: subir "windowsVersion" en package.json, y en GitHub → "Actions" →
+#   "App Windows" → "Run workflow" (rama main). Se crea la etiqueta windows-vX.Y.Z y el
+#   instalador sale en "Releases". Luego actualizar la fila 'windows' de app_versions.
+# • Desde otra rama, "Run workflow" solo deja el instalador en "Artifacts" (pruebas).
+# El instalador no está firmado con certificado de código: Windows SmartScreen mostrará
+# "Windows protegió su PC" → "Más información" → "Ejecutar de todas formas".
+name: App Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['app-windows'] # provisional: prueba de la rama (solo deja el instalador en Artifacts)
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Dependencias
+        run: npm ci
+
+      - name: Versión
+        run: |
+          V=$(node -p "require('./package.json').windowsVersion")
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          node -e "const f='desktop/package.json';const p=require('./'+f);p.version='$V';require('fs').writeFileSync(f,JSON.stringify(p,null,2))"
+
+      - name: App (web) para Windows
+        run: npm run build:desktop
+
+      - name: Instalador
+        run: npx electron-builder --win --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChamuFlac-Windows-${{ env.VERSION }}
+          path: release/ChamuFlac-Setup.exe
+
+      - name: Publicar en Releases
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: ChamuFlac Windows ${{ env.VERSION }}
+          files: release/ChamuFlac-Setup.exe
+          make_latest: false
+          body: |
+            App de Windows de ChamuFlac, versión ${{ env.VERSION }}.
+            Descarga **ChamuFlac-Setup.exe** y ábrelo. Si Windows muestra «Windows protegió su PC»,
+            pulsa «Más información» → «Ejecutar de todas formas».

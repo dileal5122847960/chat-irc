@@ -1,0 +1,9 @@
+{
+  "name": "chamuflac",
+  "productName": "ChamuFlac",
+  "version": "1.0.0",
+  "description": "ChamuFlac: tus amigos, en privado",
+  "author": "ChamuFlac",
+  "main": "main.cjs",
+  "private": true
+}

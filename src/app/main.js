@@ -20,7 +20,7 @@ import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from 
 import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
 import {
-  isNative, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, initAppEvents,
+  isNative, isApp, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, installUpdate, initAppEvents,
   deviceName, initPush, initLocal, notify, clearNotifications, isForeground,
 } from './native.js';
 
@@ -116,10 +116,10 @@ function renderUpdateRequired(v) {
     <p class="m-newver ugc">v${esc(APP_VERSION)} → <b>v${esc(v.latest)}</b></p>
     ${v.notes ? `<p class="m-notes ugc">${esc(v.notes)}</p>` : ''}
     <button class="btn primary block" id="do-update" ${v.url ? '' : 'disabled'}>${icon('download')} Descargar e instalar</button>
-    <p class="m-hint">Al terminar la descarga, ábrela e instala. Si Android lo pide, permite instalar aplicaciones desde esta fuente.</p>
+    <p class="m-hint">${platform === 'windows' ? 'Se descargará e instalará sola; luego ChamuFlac se abrirá de nuevo.' : 'Al terminar la descarga, ábrela e instala. Si Android lo pide, permite instalar aplicaciones desde esta fuente.'}</p>
 
   </section>`;
-  document.getElementById('do-update').onclick = () => openExternal(v.url);
+  document.getElementById('do-update').onclick = () => installUpdate(v.url);
 }
 function renderUpdateStrip() {
   const el = document.getElementById('update-strip');
@@ -130,7 +130,7 @@ function renderUpdateStrip() {
   if (show) {
     el.innerHTML = `<span>✨ ${esc(t('Nueva versión disponible'))} <b class="ugc">v${esc(u.latest)}</b></span>
       <button class="btn small primary" data-update>${esc(t('Actualizar'))}</button><button class="icon-btn sm" data-skip title="Más tarde">${icon('x')}</button>`;
-    el.querySelector('[data-update]').onclick = () => openExternal(u.url);
+    el.querySelector('[data-update]').onclick = () => installUpdate(u.url);
     el.querySelector('[data-skip]').onclick = () => { store.set('skipVersion', u.latest); renderUpdateStrip(); };
   }
 }
@@ -230,7 +230,7 @@ async function submitAuth(form, mode) {
 }
 
 async function signInWithGoogle() {
-  const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: isNative ? AUTH_REDIRECT : location.origin + location.pathname, skipBrowserRedirect: true } });
+  const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: isApp ? AUTH_REDIRECT : location.origin + location.pathname, skipBrowserRedirect: true } });
   if (error) return setAuthMsg(esc(error.message));
   openExternal(data.url);
 }

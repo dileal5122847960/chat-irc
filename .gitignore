@@ -7,3 +7,5 @@ dist/
 dist-app
 firma-android*.txt
 *.jks
+release
+desktop/web

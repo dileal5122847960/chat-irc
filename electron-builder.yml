@@ -1,0 +1,24 @@
+# Instalador de ChamuFlac para Windows (electron-builder). Lo usa .github/workflows/windows.yml.
+appId: com.chamuflac.app
+productName: ChamuFlac
+electronVersion: 45.5.0
+directories:
+  app: desktop          # main.cjs, preload.cjs, icon.png y web/ (la app compilada)
+  output: release
+files:
+  - "**/*"
+  - "!**/*.map"
+win:
+  target: nsis
+  icon: desktop/icon.png
+  artifactName: ChamuFlac-Setup.${ext}
+nsis:
+  oneClick: true          # instalación de un clic, para el usuario (sin permisos de administrador)
+  perMachine: false
+  createDesktopShortcut: true
+  shortcutName: ChamuFlac
+  deleteAppDataOnUninstall: false
+protocols:
+  - name: ChamuFlac
+    schemes: [com.chamuflac.app]   # vuelta del acceso con Google
+publish: null
