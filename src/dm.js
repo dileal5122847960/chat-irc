@@ -126,6 +126,16 @@ export function createDM(ctx) {
     document.querySelector(`.dm-req[data-req="${CSS.escape(id)}"]`)?.remove();
   }
   document.addEventListener('click', (e) => {
+    const retry = e.target.closest('[data-dm-retry]');
+    if (retry) {
+      const w = state.windows.get(retry.dataset.dmRetry);
+      if (!w) return;
+      const person = ctx.findPerson?.(w.peer.nick);
+      if (!person) return toast(`${w.peer.nick}: ${t('no está conectado ahora mismo.')}`);
+      closeWindow(w, true);
+      requestPrivate(person);
+      return;
+    }
     const card = e.target.closest('.dm-req');
     if (!card) return;
     if (e.target.closest('[data-req-ok]')) accept(card.dataset.req);
@@ -178,7 +188,7 @@ export function createDM(ctx) {
   function statusText(w) {
     return {
       pending: 'Esperando respuesta…', connecting: 'Conectando…', open: w.relay ? 'en línea · vía servidor (sin cifrado de extremo a extremo)' : 'en línea · cifrado de extremo a extremo',
-      closed: 'Conversación cerrada', rejected: 'No disponible',
+      away: 'reconectando…', closed: 'Conversación cerrada', rejected: 'No disponible',
     }[w.status] || '';
   }
   function renderHeader(w) {
@@ -218,7 +228,11 @@ export function createDM(ctx) {
         if (m.t === 'chunk' && typeof m.d === 'string') return onChunk(w, b64dec(m.d));
         onData(w, m);
       })
-      .on('presence', { event: 'leave' }, ({ key }) => { if (key === w.peer.cid && w.status === 'open') peerGone(w, `<b>${esc(w.peer.nick)}</b> se desconectó.`); });
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (key !== w.peer.cid || w.status !== 'open') return;
+        setTimeout(() => { if (!rt.presenceState()[w.peer.cid]) peerAway(w); }, 1500); // ignora reconexiones instantáneas
+      })
+      .on('presence', { event: 'join' }, ({ key }) => { if (key === w.peer.cid && w.status === 'away') peerBack(w); });
     await new Promise((resolve) => rt.subscribe(async (s) => {
       if (s === 'SUBSCRIBED') { await rt.track({ nick: state.nick }); resolve(); }
       if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') resolve();
@@ -244,7 +258,7 @@ export function createDM(ctx) {
       } catch (e) { console.warn(e); } finally { w.makingOffer = false; }
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' && w.status !== 'closed') enableRelay(w, true);
+      if (pc.connectionState === 'failed' && w.pc === pc && w.status !== 'closed') { enableRelay(w, true); scheduleReconnect(w, 5000); }
     };
     pc.ontrack = ({ track, transceiver }) => {
       if (track.kind === 'audio') w.audioTx ||= transceiver; else w.videoTx ||= transceiver;
@@ -265,6 +279,10 @@ export function createDM(ctx) {
     const pc = w.pc;
     if (!pc) return;
     try {
+      if (description && description.type === 'offer' && w.role === 'callee' && pc.remoteDescription) {
+        restartPeer(w); // el otro rehízo la conexión: se crea una nueva también aquí
+        return handleSignal(w, { description });
+      }
       if (description) {
         const collision = description.type === 'offer' && (w.makingOffer || pc.signalingState !== 'stable');
         w.ignoreOffer = !w.polite && collision;
@@ -296,14 +314,23 @@ export function createDM(ctx) {
     dc.bufferedAmountLowThreshold = 1 << 20;
     dc.onopen = () => {
       clearTimeout(w.connectTimer);
+      clearTimeout(w.retryTimer);
+      const restored = w.relay || w.everDirect;
+      w.relay = false;
+      w.everDirect = true;
+      w.retries = 0;
       setStatus(w, 'open');
-      sysLine(w, `Conexión directa con <b>${esc(w.peer.nick)}</b>. Los mensajes, archivos y llamadas van cifrados de extremo a extremo y no se guardan en ningún sitio.`, 'join');
+      if (restored) sysLine(w, `${icon('lock')} ` + esc(t('Conexión directa restablecida: vuelve el cifrado de extremo a extremo.')), 'join');
+      else sysLine(w, `Conexión directa con <b>${esc(w.peer.nick)}</b>. Los mensajes, archivos y llamadas van cifrados de extremo a extremo y no se guardan en ningún sitio.`, 'join');
     };
     dc.onclose = () => {
-      if (w.status !== 'open' || w.relay) return;
-      // Si la conexión directa se cae pero la otra persona sigue aquí, se continúa por el servidor
-      if (w.rt?.presenceState()[w.peer.cid]) enableRelay(w, true);
-      else peerGone(w, `<b>${esc(w.peer.nick)}</b> cerró la conversación.`);
+      if (w.dc !== dc || w.status === 'closed' || w.status === 'rejected') return; // conexión antigua o ya cerrada
+      if (w.status === 'open' && !w.relay) {
+        // La conexión directa se cayó: se sigue por el servidor y se intenta recuperar
+        if (w.call) { sysLine(w, esc(t('La llamada se cortó.')), 'err'); endCall(w); }
+        enableRelay(w, true);
+        scheduleReconnect(w);
+      }
     };
     dc.onmessage = (e) => {
       if (typeof e.data === 'string') {
@@ -313,8 +340,8 @@ export function createDM(ctx) {
     };
   }
   const sendJSON = (w, obj) => {
+    if (w.dc?.readyState === 'open') return w.dc.send(JSON.stringify(obj));
     if (w.relay) return w.rt?.send({ type: 'broadcast', event: 'relay', payload: { ...obj, from: state.clientId } });
-    if (w.dc?.readyState === 'open') w.dc.send(JSON.stringify(obj));
   };
   /**
    * Plan B: si no hay conexión directa (redes que la bloquean y sin TURN disponible), el
@@ -326,9 +353,46 @@ export function createDM(ctx) {
     w.relay = true;
     clearTimeout(w.connectTimer);
     if (announce) w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'relay-on', from: state.clientId } });
-    try { w.dc?.close(); } catch { /* nada */ }
+    if (w.status !== 'away') setStatus(w, 'open');
+    sysLine(w, `${icon('unlock')} ` + esc(t(w.everDirect
+      ? 'Se perdió la conexión directa. Mientras se intenta recuperar, la conversación sigue a través del servidor (sin cifrado de extremo a extremo; nada se guarda). Las llamadas no están disponibles en este modo.'
+      : 'No fue posible la conexión directa entre vuestras redes. La conversación continúa a través del servidor: los mensajes no se guardan, pero no van cifrados de extremo a extremo. Las llamadas no están disponibles en este modo.')), 'err');
+  }
+
+  /* ---------------- Reconexión ---------------- */
+  /** Rehace la conexión directa desde cero (nuevo RTCPeerConnection y canal de datos). */
+  function restartPeer(w) {
+    const old = w.pc;
+    if (old) { old.onconnectionstatechange = null; old.onicecandidate = null; try { old.close(); } catch { /* nada */ } }
+    w.pc = null; w.audioTx = w.videoTx = null; w.pendingIce = []; w.makingOffer = false; w.ignoreOffer = false;
+    createPeer(w);
+  }
+  /** Quien inició el privado intenta recuperar la conexión directa (con reintentos espaciados). */
+  function scheduleReconnect(w, delay = 3000) {
+    if (w.role !== 'caller') return;
+    clearTimeout(w.retryTimer);
+    w.retryTimer = setTimeout(() => {
+      if (w.status !== 'open' || !w.relay || !w.rt) return;
+      if ((w.retries = (w.retries || 0) + 1) > 5) return; // tras 5 intentos se queda en el plan B
+      restartPeer(w);
+      scheduleReconnect(w, 12000);
+    }, delay);
+  }
+  function peerAway(w) {
+    if (w.status !== 'open') return;
+    if (w.call) { sysLine(w, esc(t('La llamada se cortó.')), 'err'); endCall(w); }
+    setStatus(w, 'away');
+    sysLine(w, `<b>${esc(w.peer.nick)}</b> ${esc(t('perdió la conexión. Esperando a que vuelva…'))}`, 'part');
+    w.goneTimer = setTimeout(() => peerGone(w, `<b>${esc(w.peer.nick)}</b> ${esc(t('no volvió.'))}`), 45000);
+  }
+  function peerBack(w) {
+    clearTimeout(w.goneTimer);
     setStatus(w, 'open');
-    sysLine(w, `${icon('unlock')} ` + esc(t('No fue posible la conexión directa entre vuestras redes. La conversación continúa a través del servidor: los mensajes no se guardan, pero no van cifrados de extremo a extremo. Las llamadas no están disponibles en este modo.')), 'err');
+    sysLine(w, `<b>${esc(w.peer.nick)}</b> ${esc(t('volvió.'))}`, 'join');
+    if (w.dc?.readyState === 'open') return;
+    if (!w.relay) enableRelay(w, false);
+    w.retries = 0;
+    scheduleReconnect(w, 800);
   }
 
   function onData(w, m) {
@@ -859,8 +923,9 @@ export function createDM(ctx) {
   /* ---------------- Cierre ---------------- */
   function peerGone(w, html) {
     if (w.status === 'closed') return;
+    clearTimeout(w.goneTimer); clearTimeout(w.retryTimer);
     if (w.call) endCall(w);
-    sysLine(w, html, 'part');
+    sysLine(w, `${html} <button type="button" class="link" data-dm-retry="${esc(w.key)}">${esc(t('Volver a conectar'))}</button>`, 'part');
     teardown(w);
     setStatus(w, 'closed');
   }
@@ -889,8 +954,9 @@ export function createDM(ctx) {
   }
   function onNickChange(nick) { for (const w of dmWindows()) sendJSON(w, { t: 'nick', nick }); }
 
+  if (import.meta.env.DEV) window.__dmWindows = dmWindows; // solo en desarrollo, para pruebas
   // Diagnóstico (consola del navegador: __dmDebug())
-  window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
+  window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
     init, requestPrivate, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,

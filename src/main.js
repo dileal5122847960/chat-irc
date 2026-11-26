@@ -1344,7 +1344,11 @@ function loopTone(kind) {
 /* ---------- Privados ---------- */
 const dm = createDM({
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
-  sys, addHtml, activate: (k) => activate(k), ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY), renderChanList: () => renderChanList(), updateTitle: () => updateTitle(),
+  sys, addHtml, activate: (k) => activate(k),
+  findPerson: (nick) => {
+    for (const w of state.windows.values()) for (const p of w.people?.values() || []) if (!p.me && p.nick.toLowerCase() === nick.toLowerCase()) return { cid: p.cid, nick: p.nick, reg: p.reg };
+    return null;
+  }, ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY), renderChanList: () => renderChanList(), updateTitle: () => updateTitle(),
 });
 function openPrivate(cid) {
   const w = state.windows.get(state.active);

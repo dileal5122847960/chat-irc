@@ -719,3 +719,5 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .sys .msg-body .ico { display: inline-block; width: 15px; height: 15px; vertical-align: -2px; margin-right: 2px; }
 .dm-status.relay, .app.in-dm .dm-status.open.relay { color: #f59e0b; }
 .app.in-dm .dm-status.open.relay .ico { color: #f59e0b; }
+.dm-dot.away { background: #f59e0b; }
+.dm-status.away { color: #f59e0b; }
