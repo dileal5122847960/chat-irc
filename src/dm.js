@@ -62,17 +62,35 @@ export function createDM(ctx) {
   const fmtDur = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round(s || 0) % 60).padStart(2, '0')}`;
 
   /* ---------------- Bandeja de entrada ---------------- */
-  function init() {
-    inbox = supabase.channel('inbox:' + state.clientId, { config: { broadcast: { self: false } } });
-    inbox
-      .on('broadcast', { event: 'req' }, ({ payload }) => payload && onRequest(payload))
+  // La web usa una bandeja por pestaña (inbox:<clientId>); la app, una privada por número de
+  // usuario (user:<número>) que solo su dueño puede escuchar y solo sus amigos escribir.
+  const inboxTopic = ctx.inboxTopic || ((cid) => 'inbox:' + cid);
+  const inboxPrivate = !!ctx.inboxPrivate;
+  const carry = new Map(); // conversación anterior con la misma persona (al reconectar)
+  const handled = new Set(); // solicitudes ya atendidas (la repetición puede volver a entregarlas)
+  function init(useReplay = true) {
+    const replay = useReplay ? ctx.inboxReplay?.() : null;
+    const ch = supabase.channel(inboxTopic(state.clientId), { config: { private: inboxPrivate, broadcast: { self: false, ...(replay || {}) } } });
+    inbox = ch;
+    ch.on('broadcast', { event: 'req' }, ({ payload }) => payload && onRequest(payload))
       .on('broadcast', { event: 'resp' }, ({ payload }) => payload && onResponse(payload))
       .on('broadcast', { event: 'cancel' }, ({ payload }) => payload && dismissRequest(payload.id))
-      .subscribe();
+      .subscribe((status, err) => {
+        if (inbox !== ch) return;
+        // Si el servidor no admite la repetición de mensajes, se reintenta sin ella
+        if (replay && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')) { supabase.removeChannel(ch); return init(false); }
+        ctx.onInboxStatus?.(status, err);
+      });
   }
   async function sendTo(cid, event, payload) {
-    const ch = supabase.channel('inbox:' + cid, { config: { broadcast: { self: false } } });
-    try { await ch.httpSend(event, payload); return true; } catch { return false; } finally { supabase.removeChannel(ch); }
+    const ch = supabase.channel(inboxTopic(cid), { config: { private: inboxPrivate, broadcast: { self: false } } });
+    try {
+      // En la app, la solicitud se guarda unos minutos para entregarla si el amigo abre la app al tocar el aviso
+      if (ctx.persistRequests && event === 'req') {
+        try { await ch.httpSend(event, payload, { persist: { ttl: ctx.persistRequests } }); return true; } catch { /* sin almacenamiento: envío normal */ }
+      }
+      await ch.httpSend(event, payload); return true;
+    } catch { return false; } finally { supabase.removeChannel(ch); }
   }
   const me = () => ({ from: state.clientId, nick: state.nick, reg: state.registered });
   const dmWindows = () => [...state.windows.values()].filter((w) => w.kind === 'dm');
@@ -89,10 +107,12 @@ export function createDM(ctx) {
     if (theirs) return accept(theirs.id);
     const w = makeWindow(peer, crypto.randomUUID(), 'caller');
     w.status = 'pending';
+    if (peer.autoCall !== undefined) w.autoCall = peer.autoCall; // llamar en cuanto conecte
     ctx.activate(w.key);
     sysLine(w, `Esperando a que <b>${esc(peer.nick)}</b> acepte la conversación privada…`);
     const ok = await sendTo(peer.cid, 'req', { id: w.id, ...me() });
     if (!ok) { setStatus(w, 'closed'); return sysLine(w, 'No se pudo enviar la solicitud.', 'err'); }
+    ctx.onRequestSent?.(peer, w);
     w.timer = setTimeout(() => {
       if (w.status !== 'pending') return;
       setStatus(w, 'rejected');
@@ -103,6 +123,7 @@ export function createDM(ctx) {
 
   function onRequest(r) {
     if (!r.id || !r.from || typeof r.nick !== 'string') return;
+    if (handled.has(r.id) || dmWindows().some((x) => x.id === r.id)) return;
     // Si ya le habíamos pedido nosotros, aceptamos (ambos querían hablar)
     const mine = findByPeer(r.from);
     if (mine && mine.status === 'pending') {
@@ -110,8 +131,12 @@ export function createDM(ctx) {
       closeWindow(mine, true);
       return accept(r.id);
     }
-    if (mine) return; // ya hay conversación abierta
+    if (mine) {
+      if (!ctx.autoAccept?.(r)) return; // ya hay conversación abierta
+      closeWindow(mine, true); // el otro la rehízo (p. ej. reabrió la app): se reemplaza
+    }
     pendingRequests.set(r.id, r);
+    if (ctx.autoAccept?.(r)) return accept(r.id, { background: true });
     ctx.beep?.();
     const box = document.getElementById('dm-requests');
     if (!box) return;
@@ -141,13 +166,17 @@ export function createDM(ctx) {
     if (e.target.closest('[data-req-ok]')) accept(card.dataset.req);
     if (e.target.closest('[data-req-no]')) reject(card.dataset.req);
   });
-  async function accept(id) {
+  async function accept(id, { background = false } = {}) {
     const r = pendingRequests.get(id);
     dismissRequest(id);
     if (!r) return;
+    handled.add(id);
+    const old = state.windows.get('dm:' + r.from);
+    if (old) closeWindow(old, true);
     const w = makeWindow({ cid: r.from, nick: r.nick, reg: !!r.reg }, r.id, 'callee');
     setStatus(w, 'connecting');
-    ctx.activate(w.key);
+    if (!background || !state.active || state.active === w.key) ctx.activate(w.key);
+    else ctx.onBackgroundOpen?.(w);
     sysLine(w, 'Estableciendo conexión directa…');
     await joinSignaling(w);
     sendTo(r.from, 'resp', { id: r.id, ok: true, ...me() });
@@ -156,6 +185,13 @@ export function createDM(ctx) {
     const r = pendingRequests.get(id);
     dismissRequest(id);
     if (r) sendTo(r.from, 'resp', { id, ok: false, ...me() });
+  }
+  /** Acepta una solicitud recibida por otra vía (p. ej. al tocar un aviso push). */
+  function acceptExternal(r, opts) {
+    if (!r?.id || !r.from || handled.has(r.id) || dmWindows().some((x) => x.id === r.id)) return false;
+    pendingRequests.set(r.id, { ...r, nick: String(r.nick || r.from) });
+    accept(r.id, opts);
+    return true;
   }
   async function onResponse(r) {
     const w = dmWindows().find((x) => x.id === r.id);
@@ -176,6 +212,8 @@ export function createDM(ctx) {
       sendQueue: Promise.resolve(), incoming: new Map(), call: null,
       msgs: new Map(), unreadMids: [], lastBubble: null,
     };
+    const prev = carry.get(w.key);
+    if (prev) { carry.delete(w.key); w.lines = prev.lines; w.msgs = prev.msgs; }
     state.windows.set(w.key, w);
     ctx.renderChanList();
     return w;
@@ -322,6 +360,7 @@ export function createDM(ctx) {
       setStatus(w, 'open');
       if (restored) sysLine(w, `${icon('lock')} ` + esc(t('Conexión directa restablecida: vuelve el cifrado de extremo a extremo.')), 'join');
       else sysLine(w, `Conexión directa con <b>${esc(w.peer.nick)}</b>. Los mensajes, archivos y llamadas van cifrados de extremo a extremo y no se guardan en ningún sitio.`, 'join');
+      if (w.autoCall !== undefined) { const v = w.autoCall; delete w.autoCall; setTimeout(() => startCall(w, v), 300); }
     };
     dc.onclose = () => {
       if (w.dc !== dc || w.status === 'closed' || w.status === 'rejected') return; // conexión antigua o ya cerrada
@@ -492,6 +531,7 @@ export function createDM(ctx) {
     w.msgs.set(m.mid, m);
     w.last = null;
     ctx.addHtml(w.key, bubbleHtml(w, m), { count: !m.mine });
+    if (!m.mine) ctx.onIncoming?.(w, m);
   }
   function bubbleHtml(w, m) {
     const meta = `<span class="bmeta">${time(m.ts)}${m.mine ? tickHtml(m) : ''}</span>`;
@@ -802,6 +842,7 @@ export function createDM(ctx) {
     w.call = { video, state: 'ringing', micOn: true, camOn: false, stopTone: ctx.loopTone?.('ring') };
     if (state.active !== w.key) ctx.activate(w.key);
     showCallUI(w, video ? 'Videollamada entrante' : 'Llamada entrante', true);
+    ctx.onCallRing?.(w, video);
   }
   async function acceptCall(w) {
     if (!w.call) return;
@@ -978,8 +1019,11 @@ export function createDM(ctx) {
     if (w.status === 'pending' && !silent) sendTo(w.peer.cid, 'cancel', { id: w.id });
     if (w.call) hangup(w);
     sendJSON(w, { t: 'bye' });
+    clearTimeout(w.goneTimer); clearTimeout(w.retryTimer); clearTimeout(w.connectTimer);
+    w.status = 'closed'; // la ventana vieja ya no reacciona (su clave puede reutilizarla otra)
     setTimeout(() => teardown(w), 200);
     state.windows.delete(w.key);
+    if (silent) carry.set(w.key, { lines: w.lines, msgs: w.msgs }); // se reemplaza: se conserva lo ya hablado
     if (!silent && state.active === w.key) ctx.activate('status');
     ctx.renderChanList();
   }
@@ -1008,7 +1052,7 @@ export function createDM(ctx) {
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
-    init, requestPrivate, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
+    init, requestPrivate, acceptExternal, onActivate, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };

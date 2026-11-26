@@ -1,0 +1,770 @@
+/*
+ * ChamuFlac para Android — amigos y privados
+ * ───────────────────────────────────────────
+ * • Bienvenida: mientras se ve el logo, comprueba la versión (check_app_version) y la
+ *   sesión guardada. Si la versión es obsoleta, pide actualizar antes de seguir.
+ * • La sesión queda recordada en el teléfono: no vuelve a pedir el usuario.
+ * • Amigos por número de usuario (8 dígitos): buscar, solicitudes, aceptar, bloquear.
+ * • Privados con amigos: el mismo motor que la web (src/dm.js): conexión directa cifrada,
+ *   texto, fotos, vídeos, documentos, notas de voz, llamadas y videollamadas.
+ * • Bandeja privada "user:<número>" (solo el dueño escucha y solo sus amigos escriben).
+ * • Con la app cerrada, los avisos push (función "push" + Firebase) la despiertan.
+ */
+import '../style.css';
+import './app.css';
+import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
+import { createDM, loadIceServers } from '../dm.js';
+import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
+import { APP_NAME, logoSvg, flag } from '../brand.js';
+import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
+import {
+  isNative, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, initAppEvents,
+  deviceName, initPush, initLocal, notify, clearNotifications, isForeground,
+} from './native.js';
+
+export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
+const NICK_RE = /^[A-Za-z[\]\\`_^{|}][A-Za-z0-9[\]\\`_^{|}-]{1,19}$/;
+const SPLASH_MIN = 1200; // la bienvenida se ve al menos este tiempo
+
+setLang(initialLang());
+startI18n();
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { flowType: 'pkce', detectSessionInUrl: false, persistSession: true, autoRefreshToken: true, storageKey: 'chamuflac-app-auth' },
+  realtime: { params: { eventsPerSecond: 20 } },
+});
+
+const root = document.getElementById('root');
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+  set: (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* nada */ } },
+};
+
+const state = {
+  clientId: null, // mi número de usuario (texto): identifica mi bandeja y mi presencia
+  nick: null,
+  registered: true,
+  account: null, // { id, email, nick, number, firstName, lastName }
+  windows: new Map(), // privados abiertos (dm.js)
+  active: 'status', // 'status' = portada; 'dm:<número>' = conversación a la vista
+  friends: new Map(), // número (texto) → { number, nick, first, last, status, byMe }
+  tab: store.get('tab') || 'chats',
+  update: null, // { status, latest, notes, url }
+  ready: false,
+  pendingTaps: [],
+  inboxOk: null,
+};
+
+/* ---------- Tema ---------- */
+function applyTheme(th) { document.documentElement.dataset.theme = th; store.set('theme', th); }
+applyTheme(store.get('theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+
+/* ===================================================================== */
+/* Arranque: bienvenida → versión → sesión                               */
+/* ===================================================================== */
+
+function renderSplash(text = 'Iniciando…') {
+  root.innerHTML = `<section class="m-splash">
+    <div class="m-splash-logo">${logoSvg(96, 'sp')}</div>
+    <h1 class="ugc">${APP_NAME}</h1>
+    <p class="m-tag">Tus amigos, en privado</p>
+    <div class="m-splash-foot"><span class="spinner"></span><span id="splash-text">${esc(t(text))}</span></div>
+    <small class="m-ver">v${esc(APP_VERSION)}</small>
+  </section>`;
+  hideSplash();
+}
+const splashText = (s) => { const el = document.getElementById('splash-text'); if (el) el.textContent = t(s); };
+function renderError(e) {
+  root.innerHTML = `<section class="m-splash"><div class="m-splash-logo">${logoSvg(72, 'er')}</div>
+    <h1>No se pudo iniciar</h1><p class="m-tag ugc">${esc(e?.message || String(e))}</p>
+    <button class="btn primary" id="retry">Reintentar</button></section>`;
+  document.getElementById('retry').onclick = () => location.reload();
+}
+
+async function boot() {
+  const started = Date.now();
+  splashText('Comprobando versión…');
+  const [ver, sess] = await Promise.all([checkVersion(), supabase.auth.getSession()]);
+  await new Promise((r) => setTimeout(r, Math.max(0, SPLASH_MIN - (Date.now() - started))));
+  if (ver?.status === 'required') return renderUpdateRequired(ver);
+  const session = sess.data.session;
+  if (!session) return renderAuth('login');
+  splashText('Conectando…');
+  await afterLogin(session.user);
+}
+
+/* ---------- Versión ---------- */
+let lastVersionCheck = 0;
+async function checkVersion() {
+  lastVersionCheck = Date.now();
+  try {
+    const { data, error } = await supabase.rpc('check_app_version', { p_platform: platform, p_version: APP_VERSION });
+    if (error) return null;
+    const r = Array.isArray(data) ? data[0] : data;
+    if (!r) return null;
+    state.update = { status: r.status, latest: r.latest_version, notes: r.notes || '', url: r.download_url || '' };
+    return state.update;
+  } catch { return null; }
+}
+function renderUpdateRequired(v) {
+  root.innerHTML = `<section class="m-splash m-update">
+    <div class="m-splash-logo">${logoSvg(80, 'up')}</div>
+    <h1>Actualización obligatoria</h1>
+    <p class="m-tag">Hay una versión nueva. Para seguir usando la app tienes que instalarla.</p>
+    <p class="m-newver ugc">v${esc(APP_VERSION)} → <b>v${esc(v.latest)}</b></p>
+    ${v.notes ? `<p class="m-notes ugc">${esc(v.notes)}</p>` : ''}
+    <button class="btn primary block" id="do-update" ${v.url ? '' : 'disabled'}>${icon('download')} Descargar e instalar</button>
+    <p class="m-hint">Al terminar la descarga, ábrela e instala. Si Android lo pide, permite instalar aplicaciones desde esta fuente.</p>
+
+  </section>`;
+  document.getElementById('do-update').onclick = () => openExternal(v.url);
+}
+function renderUpdateStrip() {
+  const el = document.getElementById('update-strip');
+  if (!el) return;
+  const u = state.update;
+  const show = u?.status === 'available' && u.url && store.get('skipVersion') !== u.latest;
+  el.classList.toggle('hidden', !show);
+  if (show) {
+    el.innerHTML = `<span>✨ ${esc(t('Nueva versión disponible'))} <b class="ugc">v${esc(u.latest)}</b></span>
+      <button class="btn small primary" data-update>${esc(t('Actualizar'))}</button><button class="icon-btn sm" data-skip title="Más tarde">${icon('x')}</button>`;
+    el.querySelector('[data-update]').onclick = () => openExternal(u.url);
+    el.querySelector('[data-skip]').onclick = () => { store.set('skipVersion', u.latest); renderUpdateStrip(); };
+  }
+}
+
+/* ===================================================================== */
+/* Acceso: ingresar / crear cuenta / Google                              */
+/* ===================================================================== */
+let pendingUser = null;
+function renderAuth(mode = 'login', message = '', kind = 'error') {
+  const reg = mode === 'register';
+  const setup = mode === 'setup'; // cuenta sin nick o sin nombre (p. ej. primera vez con Google)
+  const needNick = setup && !state.account;
+  root.innerHTML = `<section class="m-auth">
+    <header class="m-auth-head">${logoSvg(56, 'au')}<h1 class="ugc">${APP_NAME}</h1>
+      <p class="m-tag">${setup ? 'Completa tu perfil' : reg ? 'Crea tu cuenta' : 'Tus amigos, en privado'}</p></header>
+    <form class="m-form" id="auth-form" novalidate>
+      ${reg || needNick ? `<label>Nick<input name="nick" autocomplete="username" maxlength="20" placeholder="tu_nick" value="${esc(suggestNick())}" required></label>` : ''}
+      ${reg || setup ? `<div class="name-row"><label>Nombre<input name="first" autocomplete="given-name" maxlength="60" value="${esc(suggestName('first'))}" required></label>
+        <label>Apellido<input name="last" autocomplete="family-name" maxlength="60" value="${esc(suggestName('last'))}" required></label></div>
+        <p class="m-hint">Tu nombre y apellido solo los verán tus amigos.</p>` : ''}
+      ${setup ? '' : `<label>Correo electrónico<input name="email" type="email" autocomplete="email" inputmode="email" value="${esc(store.get('lastEmail'))}" required></label>
+        <label>Contraseña<input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" minlength="6" required></label>`}
+      <p class="m-msg ${kind}" id="auth-msg">${message}</p>
+      <button class="btn primary block" type="submit">${setup ? 'Continuar' : reg ? 'Crear cuenta' : 'Ingresar'}</button>
+      ${setup ? `<button type="button" class="link" id="auth-out">Cerrar sesión</button>` : `
+        <div class="m-or"><span>o</span></div>
+        <button type="button" class="btn google block" id="google-btn">${GOOGLE_SVG} Continuar con Google</button>
+        <button type="button" class="link" id="auth-switch">${reg ? 'Ya tengo cuenta: ingresar' : '¿No tienes cuenta? Crear una'}</button>`}
+    </form>
+    <div class="m-auth-foot"><button type="button" class="chip-btn" id="lang-btn">${flag(getLang())} ${esc(LANGS[getLang()])}</button></div>
+  </section>`;
+  hideSplash();
+  const form = document.getElementById('auth-form');
+  form.onsubmit = (e) => { e.preventDefault(); submitAuth(form, mode); };
+  document.getElementById('auth-switch')?.addEventListener('click', () => renderAuth(reg ? 'login' : 'register'));
+  document.getElementById('google-btn')?.addEventListener('click', signInWithGoogle);
+  document.getElementById('auth-out')?.addEventListener('click', logout);
+  document.getElementById('lang-btn').onclick = () => languageMenu(() => renderAuth(mode));
+}
+const GOOGLE_SVG = '<svg class="ico" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2A11.9 11.9 0 0 1 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3a12 12 0 0 1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>';
+function suggestNick() {
+  if (state.account) return '';
+  const meta = pendingUser?.user_metadata || {};
+  return String(meta.nick || meta.name || meta.full_name || '').replace(/[^A-Za-z0-9_-]/g, '').replace(/^\d+/, '').slice(0, 20);
+}
+function suggestName(part) {
+  if (state.account) return part === 'first' ? state.account.firstName : state.account.lastName;
+  const meta = pendingUser?.user_metadata || {};
+  if (part === 'first') return meta.given_name || meta.first_name || String(meta.full_name || meta.name || '').split(' ')[0] || '';
+  return meta.family_name || meta.last_name || String(meta.full_name || meta.name || '').split(' ').slice(1).join(' ') || '';
+}
+const setAuthMsg = (html, kind = 'error') => { const el = document.getElementById('auth-msg'); if (el) { el.className = 'm-msg ' + kind; el.innerHTML = html; } };
+
+async function submitAuth(form, mode) {
+  const btn = form.querySelector('button[type=submit]');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = t('Comprobando…');
+  const fail = (html) => { btn.disabled = false; btn.textContent = label; setAuthMsg(html); };
+  try {
+    const f = Object.fromEntries(new FormData(form));
+    const names = 'first' in f ? { first: f.first.trim(), last: f.last.trim() } : null;
+    if (names && (!names.first || !names.last)) return fail(esc(t('Escribe tu nombre y apellido.')));
+    if ('nick' in f) {
+      const nick = f.nick.trim();
+      if (!NICK_RE.test(nick)) return fail(esc(t('Ese nick no es válido: 2–20 caracteres, letras, números y _ - [ ] { } ^ |, sin empezar por número.')));
+      if (mode === 'register') {
+        const { data } = await supabase.rpc('nick_available', { p_nick: nick });
+        if (data === false) return fail(esc(t('Ese nick ya está registrado. Elige otro.')));
+      }
+    }
+    if (mode === 'login') {
+      store.set('lastEmail', f.email.trim());
+      const { data, error } = await supabase.auth.signInWithPassword({ email: f.email.trim(), password: f.password });
+      if (error) return fail(esc(t(error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message)));
+      return afterLogin(data.user);
+    }
+    if (mode === 'register') {
+      store.set('lastEmail', f.email.trim());
+      const { data, error } = await supabase.auth.signUp({
+        email: f.email.trim(), password: f.password,
+        options: { data: { nick: f.nick.trim(), first_name: names.first, last_name: names.last } },
+      });
+      if (error) return fail(esc(t(/already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : error.message)));
+      if (!data.session) return renderAuth('login', esc(t('Cuenta creada. Ya puedes ingresar.')), 'ok');
+      return afterLogin(data.user);
+    }
+    // Completar perfil
+    if (!state.account) {
+      const { error } = await supabase.rpc('claim_nick', { p_nick: f.nick.trim() });
+      if (error) return fail(esc(t(error.code === '23505' ? 'Ese nick ya está registrado. Elige otro.' : error.message)));
+    }
+    const { error } = await supabase.rpc('set_my_name', { p_first: names.first, p_last: names.last });
+    if (error) return fail(esc(error.message));
+    const { data: { user } } = await supabase.auth.getUser();
+    return afterLogin(user);
+  } catch (e) { fail(esc(e.message || String(e))); }
+}
+
+async function signInWithGoogle() {
+  const { data, error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: isNative ? AUTH_REDIRECT : location.origin + location.pathname, skipBrowserRedirect: true } });
+  if (error) return setAuthMsg(esc(error.message));
+  openExternal(data.url);
+}
+/** Vuelta del acceso con Google: com.chamuflac.app://auth?code=… */
+async function handleAuthUrl(url) {
+  if (!url?.startsWith(AUTH_REDIRECT)) return;
+  closeExternal();
+  const u = new URL(url.replace(AUTH_REDIRECT, 'https://x/auth'));
+  const code = u.searchParams.get('code');
+  const err = u.searchParams.get('error_description');
+  if (err) return renderAuth('login', esc(err));
+  if (!code) return;
+  renderSplash('Conectando…');
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+  if (error) return renderAuth('login', esc(error.message));
+  afterLogin(data.user);
+}
+
+/** Con sesión: carga la cuenta; si falta el nick o el nombre, los pide; si no, entra. */
+async function afterLogin(user) {
+  const { data, error } = await supabase.rpc('my_account');
+  if (error) {
+    if (/JWT|token|session/i.test(error.message)) { await supabase.auth.signOut(); return renderAuth('login'); }
+    throw error;
+  }
+  const p = Array.isArray(data) ? data[0] : data;
+  if (!p?.nick) { state.account = null; pendingUser = user; return renderAuth('setup'); }
+  state.account = { id: user.id, email: user.email, nick: p.nick, number: p.user_number, firstName: p.first_name || '', lastName: p.last_name || '' };
+  if (!state.account.firstName || !state.account.lastName) return renderAuth('setup');
+  pendingUser = null;
+  enterApp();
+}
+
+async function logout() {
+  const id = Number(store.get('deviceId:' + state.account?.id)) || null;
+  if (id) await supabase.from('devices').update({ push_token: null }).eq('id', id); // sin avisos en este teléfono
+  dm?.closeAll();
+  state.ready = false;
+  state.account = null;
+  await supabase.auth.signOut();
+  clearNotifications();
+  renderAuth('login');
+}
+
+/* ===================================================================== */
+/* App: portada (chats y amigos) + conversación                          */
+/* ===================================================================== */
+let dm = null;
+function enterApp() {
+  const a = state.account;
+  state.clientId = String(a.number);
+  state.nick = a.nick;
+  loadIceServers(SUPABASE_URL, SUPABASE_KEY);
+  renderShell();
+  dm = createDM(dmContext());
+  dm.init();
+  state.ready = true;
+  registerDevice();
+  loadFriends().then(() => { for (const d of state.pendingTaps.splice(0)) handleTap(d); });
+  initPush({ onToken: (token) => registerDevice(token), onTap: handleTap });
+}
+
+function dmContext() {
+  return {
+    state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
+    sys, addHtml, activate, renderChanList: renderLists, updateTitle: () => {},
+    ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY),
+    findPerson: (nick) => {
+      const f = [...state.friends.values()].find((x) => x.status === 'accepted' && x.nick.toLowerCase() === nick.toLowerCase());
+      return f ? { cid: String(f.number), nick: f.nick, reg: true } : null;
+    },
+    // Bandeja privada por número; las solicitudes se guardan 1 minuto por si el amigo abre la app al tocar el aviso
+    inboxTopic: (cid) => 'user:' + cid,
+    inboxPrivate: true,
+    persistRequests: 60,
+    inboxReplay: () => ({ replay: { since: Date.now() - 60 * 1000, limit: 20 } }),
+    onInboxStatus: (status) => { state.inboxOk = status === 'SUBSCRIBED'; renderConn(); },
+    // Entre amigos no hace falta aceptar: la conversación se abre sola
+    autoAccept: (r) => state.friends.get(String(r.from))?.status === 'accepted',
+    onRequestSent: (peer, w) => sendPush(peer.cid, w.autoCall !== undefined ? 'call' : 'dm', w.id, !!w.autoCall),
+    onBackgroundOpen: (w) => { renderLists(); if (isForeground()) beep(); },
+    onIncoming: (w, m) => {
+      if (isForeground() && state.active === w.key) return;
+      if (isForeground()) beep([660, 990], 0.08, 0.06);
+      else notify({ title: w.peer.nick, body: previewText(m), peer: w.peer.cid });
+    },
+    onCallRing: (w, video) => { if (!isForeground()) notify({ title: w.peer.nick, body: t(video ? 'Videollamada entrante' : 'Llamada entrante'), peer: w.peer.cid, call: true }); },
+  };
+}
+const previewText = (m) => (m.kind === 'sticker' ? '😀 Sticker' : m.kind === 'file' ? (m.file?.voice ? '🎤 ' + t('Nota de voz') : '📎 ' + (m.file?.name || '')) : String(m.text || '').slice(0, 120));
+
+/* ---------- Dispositivo y avisos push ---------- */
+async function registerDevice(token = null) {
+  const key = 'deviceId:' + state.account.id;
+  const { data, error } = await supabase.rpc('register_device', {
+    p_device: Number(store.get(key)) || null, p_platform: platform, p_name: deviceName(), p_version: APP_VERSION, p_push_token: token,
+  });
+  if (!error && data) store.set(key, String(data));
+}
+async function sendPush(to, kind, id, video = false) {
+  if (!to) return;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    await fetch(`${SUPABASE_URL}/functions/v1/push`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: Number(to), kind, id, video }),
+    });
+  } catch { /* sin aviso: si el amigo tiene la app abierta, la bandeja ya lo recibió */ }
+}
+/** Toque en un aviso push: abrir la conversación (o la lista de amigos). */
+function handleTap(d) {
+  if (!state.ready) return state.pendingTaps.push(d);
+  if (d.kind === 'friend') { setTab('friends'); activate('status'); return loadFriends(); }
+  const from = String(d.from || '');
+  if (!from) return;
+  const w = state.windows.get('dm:' + from);
+  if (w && !['closed', 'rejected'].includes(w.status)) return activate(w.key);
+  if (d.id && dm.acceptExternal({ id: d.id, from, nick: d.nick || state.friends.get(from)?.nick || from, reg: true })) return;
+  openChat(from);
+}
+
+/* ---------- Estructura de la pantalla ---------- */
+function renderShell() {
+  root.innerHTML = `<div class="mapp" id="mapp">
+    <section class="m-home" id="home">
+      <header class="m-head">
+        <span class="m-brand">${logoSvg(30, 'hd')}<b class="ugc">${APP_NAME}</b></span>
+        <span class="m-conn" id="m-conn"></span>
+        <button class="icon-btn" id="menu-btn" title="Opciones">${icon('dots')}</button>
+      </header>
+      <div class="update-strip hidden" id="update-strip"></div>
+      <nav class="m-tabs" id="m-tabs">
+        <button data-tab="chats">Chats<span class="badge" id="badge-chats"></span></button>
+        <button data-tab="friends">Amigos<span class="badge" id="badge-friends"></span></button>
+      </nav>
+      <div class="m-list" id="m-list"></div>
+      <button class="fab" id="add-friend" title="Agregar amigo">${icon('user-plus')}</button>
+    </section>
+    <div class="app m-chat hidden" id="app">
+      <main class="chat">
+        <header class="chat-head">
+          <button class="icon-btn" id="back-btn" title="Volver">${icon('back')}</button>
+          <div class="chat-title"><h2 id="win-name"></h2><p id="topic"></p></div>
+          <button class="icon-btn" id="call-audio" title="Llamada de voz">${icon('phone')}</button>
+          <button class="icon-btn" id="call-video" title="Videollamada">${icon('video')}</button>
+          <button class="icon-btn" id="chat-menu" title="Opciones">${icon('dots')}</button>
+        </header>
+        <div class="chat-body"><div class="log" id="log"></div></div>
+        <form class="composer" id="input-form">
+          <div class="picker hidden" id="picker"></div>
+          <div class="input-wrap">
+            <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
+            <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
+            <input id="input" autocomplete="off" spellcheck="true" maxlength="4000" placeholder="Escribe un mensaje…">
+            <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
+            <button class="send" type="submit" title="Enviar">${icon('send')}</button>
+          </div>
+          <div class="rec-bar">
+            <button type="button" class="icon-btn" id="rec-cancel" title="Descartar">${icon('trash')}</button>
+            <span class="rec-dot"></span><span id="rec-time">0:00</span><canvas id="rec-wave"></canvas>
+            <button type="button" class="send" id="rec-send" title="Enviar nota de voz">${icon('send')}</button>
+          </div>
+          <input type="file" id="file-input" multiple hidden>
+        </form>
+      </main>
+    </div>
+    <div class="dm-requests" id="dm-requests" aria-live="polite"></div>
+  </div>`;
+  hideSplash();
+  document.getElementById('m-tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); };
+  document.getElementById('menu-btn').onclick = (e) => accountMenu(e.currentTarget);
+  document.getElementById('add-friend').onclick = addFriendDialog;
+  document.getElementById('m-list').onclick = onListClick;
+  document.getElementById('back-btn').onclick = () => activate('status');
+  document.getElementById('chat-menu').onclick = (e) => chatMenu(e.currentTarget);
+  const cur = () => state.windows.get(state.active);
+  document.getElementById('call-audio').onclick = () => cur() && dm.startCall(cur(), false);
+  document.getElementById('call-video').onclick = () => cur() && dm.startCall(cur(), true);
+  document.getElementById('attach-btn').onclick = () => document.getElementById('file-input').click();
+  document.getElementById('file-input').onchange = (e) => { const w = cur(); if (w) [...e.target.files].forEach((f) => dm.sendFile(w, f)); e.target.value = ''; };
+  document.getElementById('mic-btn').onclick = () => cur() && dm.startVoice(cur());
+  document.getElementById('rec-cancel').onclick = () => dm.stopVoice(false);
+  document.getElementById('rec-send').onclick = () => dm.stopVoice(true);
+  const input = document.getElementById('input');
+  const wrap = input.closest('.input-wrap');
+  input.addEventListener('input', () => wrap.classList.toggle('has-text', input.value.trim().length > 0));
+  document.getElementById('input-form').onsubmit = (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    const w = cur();
+    if (!text || !w) return;
+    input.value = ''; input.dispatchEvent(new Event('input'));
+    document.getElementById('picker')?.classList.add('hidden');
+    dm.sendText(w, text.slice(0, 4000));
+  };
+  renderUpdateStrip();
+  setTab(state.tab);
+}
+function renderConn() {
+  const el = document.getElementById('m-conn');
+  if (!el) return;
+  el.className = 'm-conn ' + (state.inboxOk ? 'on' : state.inboxOk === false ? 'off' : '');
+  el.title = t(state.inboxOk ? 'Conectado' : state.inboxOk === false ? 'Sin conexión con el servidor' : 'Conectando…');
+}
+
+function setTab(tab) {
+  state.tab = tab === 'friends' ? 'friends' : 'chats';
+  store.set('tab', state.tab);
+  document.querySelectorAll('#m-tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
+  renderLists();
+}
+
+/* ---------- Listas: chats y amigos ---------- */
+const dmWindows = () => [...state.windows.values()].filter((w) => w.kind === 'dm');
+function renderLists() {
+  const list = document.getElementById('m-list');
+  if (!list) return;
+  const chats = dmWindows();
+  const unread = chats.reduce((n, w) => n + (w.unread || 0), 0);
+  const incoming = [...state.friends.values()].filter((f) => f.status === 'pending' && !f.byMe);
+  document.getElementById('badge-chats').textContent = unread ? (unread > 99 ? '99+' : unread) : '';
+  document.getElementById('badge-friends').textContent = incoming.length || '';
+  if (state.active !== 'status') return; // la lista se pinta al volver a la portada
+  list.innerHTML = state.tab === 'chats' ? chatsHtml(chats) : friendsHtml(incoming);
+}
+function chatsHtml(chats) {
+  if (!chats.length) {
+    return `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
+      <p class="muted">Toca a un amigo para hablar. Las conversaciones no se guardan en ningún servidor.</p>
+      <button class="btn small" data-goto="friends">Ver amigos</button></div>`;
+  }
+  return chats.map((w) => {
+    const last = [...w.msgs.values()].pop();
+    const sub = last ? (last.mine ? '✓ ' : '') + previewText(last) : dm.statusText(w);
+    return `<button class="m-row" data-chat="${esc(w.peer.cid)}">
+      <span class="m-av">${avatar(w.peer.nick)}<i class="dm-dot ${w.status}"></i></span>
+      <span class="m-row-main"><b class="ugc">${esc(w.peer.nick)}</b><small class="${last ? 'ugc' : ''}">${esc(sub)}</small></span>
+      ${w.call ? `<span class="m-row-ico">${icon('phone')}</span>` : ''}
+      ${w.unread ? `<span class="badge mention">${w.unread > 99 ? '99+' : w.unread}</span>` : ''}
+    </button>`;
+  }).join('');
+}
+function friendsHtml(incoming) {
+  const all = [...state.friends.values()];
+  const friends = all.filter((f) => f.status === 'accepted');
+  const sent = all.filter((f) => f.status === 'pending' && f.byMe);
+  const blocked = all.filter((f) => f.status === 'blocked');
+  const name = (f) => [f.first, f.last].filter(Boolean).join(' ');
+  let html = `<div class="m-mine"><span>Tu número</span><button class="chip-btn" data-copy-number>${esc(fmtNumber(state.account.number))} ${icon('copy')}</button>
+    <button class="icon-btn sm" data-refresh title="Actualizar">${icon('refresh')}</button></div>`;
+  if (incoming.length) {
+    html += `<h3 class="m-sec">Solicitudes recibidas</h3>` + incoming.map((f) => `<div class="m-row static">
+      <span class="m-av">${avatar(f.nick)}</span><span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small>${esc(fmtNumber(f.number))}</small></span>
+      <button class="btn small" data-reject="${f.number}">Rechazar</button><button class="btn small primary" data-accept="${f.number}">Aceptar</button></div>`).join('');
+  }
+  html += `<h3 class="m-sec">Amigos</h3>`;
+  html += friends.length ? friends.map((f) => `<div class="m-row friend" data-friend="${f.number}">
+      <button class="m-row-open" data-chat="${f.number}"><span class="m-av">${avatar(f.nick)}</span>
+      <span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small class="ugc">${esc(name(f))}</small></span></button>
+      <button class="icon-btn" data-call="${f.number}" title="Llamada de voz">${icon('phone')}</button>
+      <button class="icon-btn" data-vcall="${f.number}" title="Videollamada">${icon('video')}</button>
+      <button class="icon-btn" data-fmenu="${f.number}" title="Opciones">${icon('dots')}</button></div>`).join('')
+    : `<div class="m-empty small"><p class="muted">Aún no tienes amigos. Toca el botón rojo de abajo y escribe el número de la otra persona: le llegará tu solicitud.</p></div>`;
+  if (sent.length) {
+    html += `<h3 class="m-sec">Solicitudes enviadas</h3>` + sent.map((f) => `<div class="m-row static">
+      <span class="m-av">${avatar(f.nick)}</span><span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small>Esperando respuesta…</small></span>
+      <button class="btn small" data-cancel="${f.number}">Cancelar</button></div>`).join('');
+  }
+  if (blocked.length) {
+    html += `<h3 class="m-sec">Bloqueados</h3>` + blocked.map((f) => `<div class="m-row static">
+      <span class="m-av">${avatar(f.nick)}</span><span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small>${esc(fmtNumber(f.number))}</small></span>
+      <button class="btn small" data-unblock="${f.number}">Desbloquear</button></div>`).join('');
+  }
+  return html;
+}
+const fmtNumber = (n) => String(n || '').replace(/(\d{4})(\d{4})/, '$1 $2');
+
+async function onListClick(e) {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.goto) return setTab(d.goto);
+  if (d.chat) return openChat(d.chat);
+  if (d.call || d.vcall) return openChat(d.call || d.vcall, !!d.vcall);
+  if (d.fmenu) return friendMenu(b, d.fmenu);
+  if ('copyNumber' in d) return copyNumber();
+  if ('refresh' in d) { await loadFriends(); return toast(t('Lista actualizada.')); }
+  const run = async (fn, args, ok) => {
+    b.disabled = true;
+    const { data, error } = await supabase.rpc(fn, args);
+    if (error) toast(t(error.message)); else if (ok) toast(t(ok));
+    await loadFriends();
+    return data;
+  };
+  if (d.accept) return run('respond_friend_request', { p_number: Number(d.accept), p_accept: true }, 'Ahora sois amigos.');
+  if (d.reject) return run('respond_friend_request', { p_number: Number(d.reject), p_accept: false });
+  if (d.cancel) return run('remove_friend', { p_number: Number(d.cancel) });
+  if (d.unblock) return run('block_user', { p_number: Number(d.unblock), p_block: false });
+}
+
+/** Abre la conversación con un amigo (y, si se pide, llama al conectar). */
+function openChat(number, video) {
+  const key = 'dm:' + number;
+  const w = state.windows.get(key);
+  const callWanted = video !== undefined;
+  if (w && !['closed', 'rejected'].includes(w.status)) {
+    activate(key);
+    if (callWanted && w.status === 'open' && !w.relay && !w.call) dm.startCall(w, video);
+    return;
+  }
+  const f = state.friends.get(String(number));
+  if (!f || f.status !== 'accepted') return w ? activate(key) : toast(t('Solo puedes hablar con tus amigos.'));
+  dm.requestPrivate({ cid: String(f.number), nick: f.nick, reg: true, ...(callWanted ? { autoCall: video } : {}) });
+}
+
+async function loadFriends() {
+  const { data, error } = await supabase.rpc('list_friends');
+  if (error) return;
+  state.friends = new Map((data || []).map((f) => [String(f.user_number), {
+    number: f.user_number, nick: f.nick, first: f.first_name || '', last: f.last_name || '', status: f.status, byMe: !!f.requested_by_me,
+  }]));
+  renderLists();
+}
+
+/* ---------- Ventanas (dm.js) ---------- */
+function activate(key) {
+  const w = state.windows.get(key);
+  closeOverlays();
+  const app = document.getElementById('app');
+  const home = document.getElementById('home');
+  if (!app) return;
+  if (!w || key === 'status') {
+    state.active = 'status';
+    app.classList.add('hidden'); app.classList.remove('in-dm');
+    home.classList.remove('hidden');
+    return renderLists();
+  }
+  state.active = key;
+  w.unread = 0; w.mention = false;
+  home.classList.add('hidden');
+  app.classList.remove('hidden'); app.classList.add('in-dm');
+  const log = document.getElementById('log');
+  log.innerHTML = w.lines.join('');
+  log.scrollTop = log.scrollHeight;
+  document.getElementById('input').disabled = false;
+  dm.onActivate(w);
+  clearNotifications(w.peer.cid);
+  renderLists();
+}
+function onBack() {
+  if (closeOverlays()) return true;
+  if (document.querySelector('.call-overlay')) return false; // en llamada: a segundo plano, sin colgar
+  if (state.active !== 'status') { activate('status'); return true; }
+  return false;
+}
+function addHtml(key, html, { count = false } = {}) {
+  const w = state.windows.get(key);
+  if (!w) return;
+  w.lines.push(html);
+  if (w.lines.length > 500) w.lines.shift();
+  if (state.active === key) {
+    const log = document.getElementById('log');
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    log.insertAdjacentHTML('beforeend', html);
+    if (log.children.length > 500) log.firstElementChild.remove();
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+  if (count && (state.active !== key || !isForeground())) w.unread = (w.unread || 0) + 1;
+  renderLists();
+}
+function sys(key, html, kind = 'info') {
+  const w = state.windows.get(key);
+  if (!w) return;
+  w.last = null;
+  addHtml(key, `<div class="sys ${kind}"><span class="gutter"><time>${time(Date.now())}</time></span><div class="msg-body">${html}</div></div>`);
+}
+function onResume() {
+  if (!state.ready) return;
+  loadFriends();
+  const w = state.windows.get(state.active);
+  if (w) { w.unread = 0; clearNotifications(w.peer.cid); renderLists(); }
+  if (Date.now() - lastVersionCheck > 10 * 60 * 1000) checkVersion().then((v) => {
+    if (v?.status === 'required' && !document.querySelector('.call-overlay')) { dm.closeAll(); state.ready = false; renderUpdateRequired(v); } else renderUpdateStrip();
+  });
+}
+
+/* ---------- Menús y diálogos ---------- */
+function closeOverlays() {
+  const open = document.querySelectorAll('.menu-pop, .dialog-wrap, .sheet-scrim');
+  open.forEach((el) => el.remove());
+  return open.length > 0;
+}
+function openMenu(anchor, items, title = '') {
+  closeOverlays();
+  const m = document.createElement('div');
+  m.className = 'menu-pop m-sheet';
+  m.innerHTML = (title ? `<div class="menu-title">${title}</div>` : '') + items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.icon ? icon(it.icon) : ''}<span>${esc(it.label)}</span>${it.hint ? `<small class="ugc">${esc(it.hint)}</small>` : ''}</button>`).join('');
+  const scrim = document.createElement('div');
+  scrim.className = 'sheet-scrim';
+  scrim.onclick = () => closeOverlays();
+  document.body.append(scrim, m);
+  m.onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; closeOverlays(); items[b.dataset.i].run?.(); };
+}
+function openDialog({ title, text = '', fields = [], confirm = 'Aceptar', danger = false, validate }) {
+  closeOverlays();
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'dialog-wrap';
+    wrap.innerHTML = `<form class="dialog m-dialog" novalidate><h3>${esc(title)}</h3>${text ? `<p class="muted">${text}</p>` : ''}
+      ${fields.map((f) => `<label>${esc(f.label)}<input name="${f.name}" value="${esc(f.value || '')}" maxlength="${f.max || 100}" ${f.inputmode ? `inputmode="${f.inputmode}"` : ''} placeholder="${esc(f.placeholder || '')}"></label>`).join('')}
+      <p class="m-msg error" data-err></p>
+      <div class="dialog-actions"><button type="button" class="btn" data-cancel>Cancelar</button><button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${esc(confirm)}</button></div></form>`;
+    document.body.appendChild(wrap);
+    const form = wrap.querySelector('form');
+    const done = (v) => { wrap.remove(); resolve(v); };
+    wrap.onclick = (e) => { if (e.target === wrap) done(null); };
+    wrap.querySelector('[data-cancel]').onclick = () => done(null);
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = Object.fromEntries(new FormData(form));
+      const err = validate ? await validate(v) : '';
+      if (err) { form.querySelector('[data-err]').innerHTML = err; return; }
+      done(v);
+    };
+    form.querySelector('input')?.focus();
+  });
+}
+let toastTimer;
+function toast(text) {
+  let el = document.getElementById('toast');
+  if (!el) { el = document.createElement('div'); el.id = 'toast'; el.className = 'toast'; document.body.appendChild(el); }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+async function addFriendDialog() {
+  let found = null;
+  const v = await openDialog({
+    title: t('Agregar amigo'),
+    text: esc(t('Escribe el número de 8 dígitos de la otra persona. Lo ve en la app, en Amigos.')),
+    fields: [{ name: 'number', label: t('Número'), inputmode: 'numeric', max: 12, placeholder: '1234 5678' }],
+    confirm: t('Enviar solicitud'),
+    validate: async ({ number }) => {
+      const n = Number(String(number).replace(/\D/g, ''));
+      if (!(n >= 10000000 && n <= 99999999)) return esc(t('El número tiene 8 dígitos.'));
+      if (n === Number(state.account.number)) return esc(t('Ese es tu propio número.'));
+      const { data } = await supabase.rpc('find_user', { p_number: n });
+      found = Array.isArray(data) ? data[0] : data;
+      if (!found) return esc(t('No existe ningún usuario con ese número.'));
+      if (found.relation === 'accepted') return esc(t('{nick} ya es tu amigo.', { nick: found.nick }));
+      if (found.relation === 'blocked') return esc(t('Tienes bloqueado a {nick}.', { nick: found.nick }));
+      return '';
+    },
+  });
+  if (!v || !found) return;
+  const { data, error } = await supabase.rpc('send_friend_request', { p_number: found.user_number });
+  if (error) return toast(t(error.message));
+  if (data === 'accepted') toast(t('{nick} ya te había invitado: ahora sois amigos.', { nick: found.nick }));
+  else { toast(t('Solicitud enviada a {nick}.', { nick: found.nick })); sendPush(found.user_number, 'friend', 'friend'); }
+  setTab('friends');
+  loadFriends();
+}
+function friendMenu(anchor, number) {
+  const f = state.friends.get(String(number));
+  if (!f) return;
+  openMenu(anchor, [
+    { label: t('Enviar mensaje'), icon: 'message', run: () => openChat(number) },
+    { label: t('Copiar número'), icon: 'copy', hint: fmtNumber(f.number), run: () => copyText(String(f.number)) },
+    '-',
+    { label: t('Eliminar amigo'), icon: 'trash', danger: true, run: async () => {
+      const ok = await openDialog({ title: t('Eliminar amigo'), text: esc(t('{nick} dejará de estar en tu lista. Podéis volver a agregaros.', { nick: f.nick })), confirm: t('Eliminar'), danger: true });
+      if (!ok) return;
+      await supabase.rpc('remove_friend', { p_number: f.number });
+      closeChatWith(number); loadFriends();
+    } },
+    { label: t('Bloquear'), icon: 'ban', danger: true, run: async () => {
+      const ok = await openDialog({ title: t('Bloquear'), text: esc(t('{nick} no podrá escribirte, llamarte ni encontrarte por tu número.', { nick: f.nick })), confirm: t('Bloquear'), danger: true });
+      if (!ok) return;
+      await supabase.rpc('block_user', { p_number: f.number, p_block: true });
+      closeChatWith(number); loadFriends();
+    } },
+  ], `<b class="ugc">${esc(f.nick)}</b>`);
+}
+function closeChatWith(number) { const w = state.windows.get('dm:' + number); if (w) dm.closeWindow(w); }
+function chatMenu(anchor) {
+  const w = state.windows.get(state.active);
+  if (!w) return;
+  openMenu(anchor, [
+    ...(['closed', 'rejected'].includes(w.status) ? [{ label: t('Volver a conectar'), icon: 'refresh', run: () => openChat(w.peer.cid) }] : []),
+    { label: t('Cerrar conversación'), icon: 'x', danger: true, run: () => dm.closeWindow(w) },
+  ]);
+}
+function accountMenu(anchor) {
+  const a = state.account;
+  openMenu(anchor, [
+    { label: t('Mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
+    { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
+    { label: t('Idioma'), icon: 'globe', hint: LANGS[getLang()], run: () => languageMenu(() => renderLists()) },
+    { label: t('Cambiar tema'), icon: document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', run: () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark') },
+    '-',
+    { label: t('Cerrar sesión'), icon: 'logout', danger: true, run: async () => {
+      const ok = await openDialog({ title: t('Cerrar sesión'), text: esc(t('Dejarás de recibir avisos en este teléfono hasta que vuelvas a ingresar.')), confirm: t('Cerrar sesión'), danger: true });
+      if (ok) logout();
+    } },
+  ], `<b class="ugc">${esc(a.nick)}</b><small><span class="ugc">${esc(a.email || '')}</span> · v${esc(APP_VERSION)}</small>`);
+}
+async function editNameDialog() {
+  const a = state.account;
+  const v = await openDialog({
+    title: t('Nombre y apellido'), text: esc(t('Solo lo verán tus amigos.')),
+    fields: [{ name: 'first', label: t('Nombre'), value: a.firstName, max: 60 }, { name: 'last', label: t('Apellido'), value: a.lastName, max: 60 }],
+    confirm: t('Guardar'),
+    validate: ({ first, last }) => (!first.trim() || !last.trim() ? esc(t('Escribe tu nombre y apellido.')) : ''),
+  });
+  if (!v) return;
+  const { error } = await supabase.rpc('set_my_name', { p_first: v.first.trim(), p_last: v.last.trim() });
+  if (error) return toast(error.message);
+  a.firstName = v.first.trim(); a.lastName = v.last.trim();
+  toast(t('Guardado.'));
+}
+function languageMenu(after) {
+  openMenu(null, Object.entries(LANGS).map(([code, name]) => ({ label: name, run: () => { setLang(code); retranslate(); after?.(); } })), esc(t('Idioma')));
+}
+const copyNumber = () => copyText(String(state.account.number), t('Número copiado: {n}', { n: fmtNumber(state.account.number) }));
+async function copyText(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg || t('Copiado.')); } catch { toast(text); }
+}
+
+if (import.meta.env.DEV) window.__app = { state, supabase, handleTap, openChat };
+
+/* ---------- ¡En marcha! ---------- */
+renderSplash();
+initAppEvents({ onUrl: handleAuthUrl, onResume, onBack });
+initLocal({ onTap: (extra) => extra.from && openChat(String(extra.from)) });
+boot().catch((e) => renderError(e));

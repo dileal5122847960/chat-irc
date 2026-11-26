@@ -13,8 +13,8 @@ const METERED_DOMAIN = Deno.env.get('METERED_DOMAIN') ?? '';
 const METERED_API_KEY = Deno.env.get('METERED_API_KEY') ?? '';
 const CF_KEY_ID = Deno.env.get('CF_TURN_KEY_ID') ?? '';
 const CF_TOKEN = Deno.env.get('CF_TURN_API_TOKEN') ?? '';
-// Solo nuestra web puede pedir credenciales
-const ALLOWED = ['https://chat-irc.vercel.app', 'http://localhost:5173'];
+// Solo nuestra web y la app (Android: https://localhost) pueden pedir credenciales
+const ALLOWED = ['https://chat-irc.vercel.app', 'https://localhost', 'http://localhost:5173', 'http://localhost:5174'];
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin') ?? '';

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icono pequeño de los avisos (blanco: Android lo colorea) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M14,18h22a10,10 0,0 1,10 10v12a10,10 0,0 1,-10 10H24l-10,8v-8a10,10 0,0 1,-10 -10V28a10,10 0,0 1,10 -10zM38,8h12a10,10 0,0 1,10 10v10a10,10 0,0 1,-10 10h-1v7l-6,-5V28a14,14 0,0 0,-14 -14h-1a10,10 0,0 1,10 -6z"/>
+</vector>

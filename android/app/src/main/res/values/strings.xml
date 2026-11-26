@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ChamuFlac</string>
+    <string name="title_activity_main">ChamuFlac</string>
+    <string name="package_name">com.chamuflac.app</string>
+    <string name="custom_url_scheme">com.chamuflac.app</string>
+</resources>
