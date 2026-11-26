@@ -442,6 +442,7 @@ export function createDM(ctx) {
         ctx.renderChanList();
         return;
       }
+      case 'cam': w.peerCam = !!m.on; return renderCallUI(w);
       case 'call': return onCallOffer(w, !!m.video);
       case 'call-accept': return onCallAccepted(w);
       case 'call-reject': if (w.call) { sysLine(w, `📞 <b>${esc(w.peer.nick)}</b> rechazó la llamada.`, 'err'); endCall(w, false); } return;
@@ -826,6 +827,7 @@ export function createDM(ctx) {
   }
   function connected(w) {
     const c = w.call;
+    sendJSON(w, { t: 'cam', on: !!c.camOn });
     c.state = 'active';
     c.startedAt = Date.now();
     renderCallUI(w);
@@ -858,15 +860,18 @@ export function createDM(ctx) {
     w.audioTx?.sender.replaceTrack(null);
     w.videoTx?.sender.replaceTrack(null);
     w.call = null;
+    w.peerCam = undefined;
     document.querySelector('.call-overlay')?.remove();
     if (state.active === w.key) renderHeader(w);
   }
   function showCallUI(w, statusLabel, incoming = false) {
     document.querySelector('.call-overlay')?.remove();
     const el = document.createElement('div');
-    el.className = 'call-overlay';
+    el.className = 'call-overlay dm-call';
     el.dataset.key = w.key;
-    el.innerHTML = `<video class="remote-video" autoplay playsinline></video>
+    // El vídeo remoto va SIN sonido (los móviles permiten reproducirlo solo) y el audio por separado
+    el.innerHTML = `<video class="remote-video" autoplay playsinline muted></video><audio class="remote-audio" autoplay></audio>
+      ${incoming ? '' : `<div class="call-top"><button class="icon-btn light" data-call="min" title="Volver al chat">${icon('message')}</button><button class="icon-btn light" data-call="full" title="Pantalla completa">${icon('expand')}</button></div>`}
       <div class="call-peer">${avatar(w.peer.nick)}<h2>${esc(w.peer.nick)}</h2><p class="call-status">${esc(statusLabel)}</p></div>
       <video class="local-video hidden" autoplay playsinline muted></video>
       <div class="call-controls">${incoming
@@ -876,11 +881,14 @@ export function createDM(ctx) {
     document.body.appendChild(el);
     if (w.call.stream) { const lv = el.querySelector('.local-video'); lv.srcObject = w.call.stream; lv.classList.toggle('hidden', !w.call.camOn); }
     el.onclick = (e) => {
+      if (el.classList.contains('minimized') && !e.target.closest('[data-call]')) { el.classList.remove('minimized'); return; }
       const a = e.target.closest('[data-call]')?.dataset.call;
       if (!a || !w.call) return;
       if (a === 'accept') { acceptCall(w).then(() => w.call && showCallUI(w, '0:00')); }
       if (a === 'reject') { sendJSON(w, { t: 'call-reject' }); sysLine(w, 'Rechazaste la llamada.'); endCall(w); }
       if (a === 'hangup') hangup(w);
+      if (a === 'min') { el.classList.add('minimized'); el.classList.remove('full'); return; }
+      if (a === 'full') { el.classList.toggle('full'); el.querySelector('[data-call="full"]').innerHTML = icon(el.classList.contains('full') ? 'shrink' : 'expand'); return; }
       if (a === 'mic') { w.call.micOn = !w.call.micOn; w.call.stream.getAudioTracks().forEach((t) => (t.enabled = w.call.micOn)); renderCallUI(w); }
       if (a === 'cam') toggleCam(w);
     };
@@ -903,17 +911,29 @@ export function createDM(ctx) {
     }
     const lv = document.querySelector('.call-overlay .local-video');
     if (lv) { lv.srcObject = c.stream; lv.classList.toggle('hidden', !c.camOn); }
+    sendJSON(w, { t: 'cam', on: c.camOn });
     renderCallUI(w);
   }
   function renderCallUI(w) {
     const el = document.querySelector('.call-overlay');
     const c = w.call;
     if (!el || !c) return;
-    const vt = w.remote.getVideoTracks()[0];
-    const hasVideo = !!(vt && !vt.muted && vt.readyState === 'live');
-    el.classList.toggle('has-video', hasVideo);
     const rv = el.querySelector('.remote-video');
-    if (rv.srcObject !== w.remote) { rv.srcObject = w.remote; rv.play().catch(() => {}); }
+    const ra = el.querySelector('.remote-audio');
+    if (rv.srcObject !== w.remote) {
+      rv.srcObject = w.remote;
+      rv.onresize = rv.onloadeddata = rv.onplaying = () => renderCallUI(w);
+      rv.play().catch(() => {});
+    }
+    if (ra.srcObject !== w.remote) { ra.srcObject = w.remote; ra.play().catch(() => {}); }
+    else if (ra.paused) ra.play().catch(() => {});
+    if (rv.paused) rv.play().catch(() => {});
+    // Hay imagen si la pista está viva y llegan fotogramas (algunos móviles no actualizan "muted")
+    const vt = w.remote.getVideoTracks()[0];
+    const flowing = rv.currentTime !== rv.__lastT; // el vídeo avanza desde la última comprobación
+    rv.__lastT = rv.currentTime;
+    const hasVideo = w.peerCam !== false && !!(vt && vt.readyState === 'live' && rv.videoWidth > 0 && (!vt.muted || flowing));
+    el.classList.toggle('has-video', hasVideo);
     const mic = el.querySelector('[data-call="mic"]');
     if (mic) { mic.innerHTML = icon(c.micOn ? 'mic' : 'mic-off'); mic.classList.toggle('off', !c.micOn); }
     const cam = el.querySelector('[data-call="cam"]');

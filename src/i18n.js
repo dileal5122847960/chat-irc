@@ -311,6 +311,7 @@ const ENTRIES = [
   ['volvió.', 'is back.', 'voltou.', 'est revenu.', 'è tornato.'],
   ['Volver a conectar', 'Reconnect', 'Reconectar', 'Se reconnecter', 'Riconnetti'],
   ['no está conectado ahora mismo.', 'is not online right now.', 'não está conectado agora.', 'n’est pas connecté pour le moment.', 'non è online in questo momento.'],
+  ['Pantalla completa', 'Full screen', 'Tela cheia', 'Plein écran', 'Schermo intero'],
   // Traducción y PDF
   ['Traduciendo…', 'Translating…', 'Traduzindo…', 'Traduction…', 'Traduzione…'],
   ['Ver original', 'Show original', 'Ver original', 'Voir l’original', 'Mostra originale'],

@@ -209,7 +209,7 @@ export function createGroupCall(ctx) {
     renderTiles();
   }
   function tileHtml(id, nick, me) {
-    return `<div class="gc-tile" data-tile="${id}"><video autoplay playsinline ${me ? 'muted' : ''}></video><div class="gc-av">${avatar(nick)}</div><span class="gc-name"><span class="ugc">${esc(nick)}</span>${me ? ` (${esc(t('tú'))})` : ''}</span><span class="gc-state"></span></div>`;
+    return `<div class="gc-tile" data-tile="${id}"><video autoplay playsinline muted></video>${me ? '' : '<audio autoplay></audio>'}<div class="gc-av">${avatar(nick)}</div><span class="gc-name"><span class="ugc">${esc(nick)}</span>${me ? ` (${esc(t('tú'))})` : ''}</span><span class="gc-state"></span></div>`;
   }
   function renderTiles() {
     const grid = document.getElementById('gc-grid');
@@ -225,8 +225,11 @@ export function createGroupCall(ctx) {
       let tile = grid.querySelector(`[data-tile="${CSS.escape(id)}"]`);
       if (!tile) { grid.insertAdjacentHTML('beforeend', tileHtml(id, nick, me)); tile = grid.lastElementChild; }
       const v = tile.querySelector('video');
-      if (v.srcObject !== stream) { v.srcObject = stream; v.play().catch(() => {}); }
-      tile.classList.toggle('has-video', hasVideo);
+      if (v.srcObject !== stream) { v.srcObject = stream; v.onresize = v.onplaying = renderTiles; v.play().catch(() => {}); }
+      if (v.paused) v.play().catch(() => {});
+      const au = tile.querySelector('audio');
+      if (au && au.srcObject !== stream) { au.srcObject = stream; au.play().catch(() => {}); } else if (au?.paused) au.play().catch(() => {});
+      tile.classList.toggle('has-video', me ? hasVideo : hasVideo || v.videoWidth > 0);
       tile.classList.toggle('me', me);
       tile.querySelector('.gc-state').textContent = me || !connState || connState === 'connected' ? '' : connState === 'failed' ? '⚠️' : '…';
     }

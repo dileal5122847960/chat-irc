@@ -721,3 +721,27 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .app.in-dm .dm-status.open.relay .ico { color: #f59e0b; }
 .dm-dot.away { background: #f59e0b; }
 .dm-status.away { color: #f59e0b; }
+
+/* ===== Llamada de privado: ventana mediana en ordenador ===== */
+.call-overlay .remote-audio { display: none; }
+.call-overlay.dm-call .remote-video { object-fit: contain; }
+.call-top { position: absolute; z-index: 4; top: 12px; left: 12px; display: flex; gap: 6px; }
+.call-top .icon-btn { background: rgba(0, 0, 0, .35); backdrop-filter: blur(6px); }
+@media (min-width: 701px) {
+  .call-overlay.dm-call:not(.full):not(.minimized) {
+    inset: auto; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: min(880px, 92vw); height: min(600px, 84vh); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .06);
+  }
+  .call-overlay.dm-call:not(.full) .local-video { width: min(22%, 160px); }
+  .call-overlay.dm-call:not(.full) .call-peer { margin-top: 8vh; }
+  .call-overlay.dm-call:not(.full) .call-controls { bottom: 34px; }
+}
+/* Minimizada: ventanita flotante para seguir chateando */
+.call-overlay.dm-call.minimized { inset: auto 16px 90px auto; width: 300px; height: 200px; border-radius: 16px; overflow: hidden; cursor: pointer; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); transform: none; }
+.call-overlay.dm-call.minimized .call-controls, .call-overlay.dm-call.minimized .call-e2e, .call-overlay.dm-call.minimized .call-top, .call-overlay.dm-call.minimized .call-peer h2 { display: none; }
+.call-overlay.dm-call.minimized .local-video { width: 70px; right: 8px; top: 8px; border-radius: 8px; }
+.call-overlay.dm-call.minimized .call-peer { margin-top: 30px; }
+.call-overlay.dm-call.minimized .call-peer .avatar { width: 56px; height: 56px; font-size: 1rem; }
+@media (max-width: 700px) { .call-overlay.dm-call.minimized { right: 8px; width: 170px; height: 230px; } }
+.gc-tile audio { display: none; }
