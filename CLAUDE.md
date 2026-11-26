@@ -45,6 +45,27 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
   que solo el dueño escuche su canal. Push nativo: FCM (Android/Windows) / APNs-PushKit (iOS).
 - Las apps nativas podrían hacerse con Capacitor o React Native reutilizando `src/dm.js`.
 
+## App de Android (hecha, 26-11-2026)
+
+- **Capacitor 8**: `app/index.html` + `src/app/` (main.js, native.js, app.css) → `npm run build:app` → `dist-app/` →
+  `npx cap sync android` → proyecto nativo `android/` (paquete `com.chamuflac.app`). Prueba en navegador: `npm run dev:app` (puerto 5174).
+- Solo **amigos y privados**. Bienvenida → `check_app_version('android', …)` → sesión recordada (storageKey `chamuflac-app-auth`).
+  Google: navegador del sistema + vuelta `com.chamuflac.app://auth` (Redirect URL añadida en Supabase si el dueño la configuró).
+- Reutiliza `src/dm.js` con hooks (`inboxTopic`, `inboxPrivate`, `autoAccept`, `resendRequests`, `onIncoming`, `onCallRing`,
+  `acceptExternal`…). Piezas comunes web/app: `src/common.js`, `src/config.js`.
+- **Bandeja privada `user:<número>`** (migración 0009, Realtime Authorization con RLS): solo el dueño escucha, solo amigos escriben.
+  Entre amigos la conversación se acepta sola. La solicitud se **reenvía cada 4 s** mientras se espera (la repetición de mensajes
+  guardados de Realtime no funciona en el plan actual).
+- **Avisos push**: Edge Function `push` (JWT desactivado) → FCM HTTP v1 con el secreto `FCM_SERVICE_ACCOUNT` (Supabase).
+  `push_targets()` (solo service_role) comprueba amistad; `forget_push_token()` (0010) borra tokens caducados.
+  Proyecto Firebase "ChamuFlac" (plan Spark). Canales de aviso: `messages`, `calls`. Avisos locales con la app en segundo plano.
+- **Compilación**: `.github/workflows/android.yml` (GitHub Actions). Secretos de GitHub: `ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD` (clave de firma: la tiene el dueño; **nunca cambiarla**), `GOOGLE_SERVICES_JSON`.
+- **Publicar versión de Android**: subir `androidVersion` en `package.json` → etiqueta `android-vX.Y.Z` → el APK sale en Releases
+  (`ChamuFlac.apk`) → actualizar la fila `android` de `app_versions` (`latest_version`, `download_url`, y `min_version` si es obligatoria).
+- Limitaciones conocidas: ambos deben estar conectados (no hay mensajes diferidos); descargar archivos recibidos en el WebView puede
+  no funcionar (pendiente: guardar con Filesystem/Share); llamada con pantalla completa sobre el bloqueo (ConnectionService) pendiente.
+
 ## Versiones y actualizaciones automáticas — decisión del dueño
 
 Saldrán muchas versiones antes de la final: **todas las apps se actualizan solas**.
@@ -97,7 +118,7 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
 
 ## Configuración externa (ya hecha)
 
-- Supabase: migraciones `0001`–`0006` aplicadas (`0007` aplicada; `0008` pendiente de ejecutar al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
+- Supabase: migraciones `0001`–`0006` aplicadas (`0007`–`0010` aplicadas y verificadas al 26-11-2026) (ver `supabase/migrations/`). Auth: email activado,
   "Confirm email" desactivado, anónimos desactivados, Google activado. Site URL = la de Vercel.
 - Google Cloud: cliente OAuth "Chat IRC" (proyecto "My First Project"), app publicada.
 - Vercel: proyecto `chat-irc` conectado a GitHub (despliegue automático desde `main`).
