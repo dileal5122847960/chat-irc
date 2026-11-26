@@ -856,6 +856,7 @@ export function createDM(ctx) {
     if (!c) return;
     c.stopTone?.();
     clearInterval(c.timer);
+    clearInterval(c.voiceTimer);
     c.stream?.getTracks().forEach((t) => t.stop());
     w.audioTx?.sender.replaceTrack(null);
     w.videoTx?.sender.replaceTrack(null);
@@ -877,6 +878,7 @@ export function createDM(ctx) {
       <div class="call-controls">${incoming
         ? `<button class="round red" data-call="reject" title="Rechazar">${icon('phone-off')}</button><button class="round green" data-call="accept" title="Contestar">${icon(w.call.video ? 'video' : 'phone')}</button>`
         : `<button class="round" data-call="mic" title="Micrófono">${icon('mic')}</button><button class="round" data-call="cam" title="Cámara">${icon('video')}</button><button class="round red" data-call="hangup" title="Colgar">${icon('phone-off')}</button>`}</div>
+      <button class="unmute-btn hidden" data-call="unmute">🔊 <span>Tocar para activar el sonido</span></button>
       <p class="call-e2e">${icon('lock')} Conexión directa cifrada de extremo a extremo</p>`;
     document.body.appendChild(el);
     if (w.call.stream) { const lv = el.querySelector('.local-video'); lv.srcObject = w.call.stream; lv.classList.toggle('hidden', !w.call.camOn); }
@@ -887,6 +889,7 @@ export function createDM(ctx) {
       if (a === 'accept') { acceptCall(w).then(() => w.call && showCallUI(w, '0:00')); }
       if (a === 'reject') { sendJSON(w, { t: 'call-reject' }); sysLine(w, 'Rechazaste la llamada.'); endCall(w); }
       if (a === 'hangup') hangup(w);
+      if (a === 'unmute') { el.querySelectorAll('audio, video.remote-video').forEach((m) => m.play().catch(() => {})); el.querySelector('.unmute-btn').classList.add('hidden'); return; }
       if (a === 'min') { el.classList.add('minimized'); el.classList.remove('full'); return; }
       if (a === 'full') { el.classList.toggle('full'); el.querySelector('[data-call="full"]').innerHTML = icon(el.classList.contains('full') ? 'shrink' : 'expand'); return; }
       if (a === 'mic') { w.call.micOn = !w.call.micOn; w.call.stream.getAudioTracks().forEach((t) => (t.enabled = w.call.micOn)); renderCallUI(w); }
@@ -914,6 +917,17 @@ export function createDM(ctx) {
     sendJSON(w, { t: 'cam', on: c.camOn });
     renderCallUI(w);
   }
+  /** Ilumina al otro participante cuando llega su voz (sirve para saber si el audio llega). */
+  function watchVoice(w, el) {
+    const c = w.call;
+    if (!c || c.voiceTimer || !w.pc) return;
+    c.voiceTimer = setInterval(async () => {
+      if (!w.call || !w.pc) return clearInterval(c.voiceTimer);
+      let level = 0;
+      (await w.pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp' && r.kind === 'audio' && r.audioLevel != null) level = r.audioLevel; });
+      document.querySelector('.call-overlay.dm-call')?.classList.toggle('speaking', level > 0.02);
+    }, 300);
+  }
   function renderCallUI(w) {
     const el = document.querySelector('.call-overlay');
     const c = w.call;
@@ -925,8 +939,11 @@ export function createDM(ctx) {
       rv.onresize = rv.onloadeddata = rv.onplaying = () => renderCallUI(w);
       rv.play().catch(() => {});
     }
-    if (ra.srcObject !== w.remote) { ra.srcObject = w.remote; ra.play().catch(() => {}); }
-    else if (ra.paused) ra.play().catch(() => {});
+    const tryAudio = () => ra.play().then(() => el.querySelector('.unmute-btn')?.classList.add('hidden'))
+      .catch(() => el.querySelector('.unmute-btn')?.classList.remove('hidden')); // el navegador bloqueó el sonido
+    if (ra.srcObject !== w.remote) { ra.srcObject = w.remote; tryAudio(); }
+    else if (ra.paused) tryAudio();
+    watchVoice(w, el);
     if (rv.paused) rv.play().catch(() => {});
     // Hay imagen si la pista está viva y llegan fotogramas (algunos móviles no actualizan "muted")
     const vt = w.remote.getVideoTracks()[0];
@@ -975,6 +992,19 @@ export function createDM(ctx) {
   function onNickChange(nick) { for (const w of dmWindows()) sendJSON(w, { t: 'nick', nick }); }
 
   if (import.meta.env.DEV) window.__dmWindows = dmWindows; // solo en desarrollo, para pruebas
+  /** Estadísticas de la llamada (consola: await __callStats()) para diagnosticar audio/vídeo. */
+  window.__callStats = async () => {
+    const w = dmWindows().find((x) => x.call);
+    if (!w?.pc) return null;
+    const out = {};
+    (await w.pc.getStats()).forEach((r) => {
+      if (r.type === 'inbound-rtp' || r.type === 'outbound-rtp') out[r.type + ':' + r.kind] = { bytes: r.bytesReceived ?? r.bytesSent, level: r.audioLevel };
+    });
+    const ra = document.querySelector('.call-overlay .remote-audio');
+    out.audioEl = ra ? { paused: ra.paused, muted: ra.muted, tracks: ra.srcObject?.getAudioTracks().map((t) => t.readyState + (t.muted ? '/muted' : '')) } : null;
+    out.senders = w.pc.getTransceivers().map((t) => (t.receiver.track.kind + ':' + (t.sender.track ? t.sender.track.kind + (t.sender.track.enabled ? '' : '(off)') : 'null') + ':' + t.currentDirection));
+    return out;
+  };
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {

@@ -312,6 +312,7 @@ const ENTRIES = [
   ['Volver a conectar', 'Reconnect', 'Reconectar', 'Se reconnecter', 'Riconnetti'],
   ['no está conectado ahora mismo.', 'is not online right now.', 'não está conectado agora.', 'n’est pas connecté pour le moment.', 'non è online in questo momento.'],
   ['Pantalla completa', 'Full screen', 'Tela cheia', 'Plein écran', 'Schermo intero'],
+  ['Tocar para activar el sonido', 'Tap to turn on sound', 'Toque para ativar o som', 'Touche pour activer le son', 'Tocca per attivare l’audio'],
   // Traducción y PDF
   ['Traduciendo…', 'Translating…', 'Traduzindo…', 'Traduction…', 'Traduzione…'],
   ['Ver original', 'Show original', 'Ver original', 'Voir l’original', 'Mostra originale'],

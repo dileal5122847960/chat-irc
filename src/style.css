@@ -745,3 +745,11 @@ a.att:hover { border-color: rgba(225, 29, 72, .5); }
 .call-overlay.dm-call.minimized .call-peer .avatar { width: 56px; height: 56px; font-size: 1rem; }
 @media (max-width: 700px) { .call-overlay.dm-call.minimized { right: 8px; width: 170px; height: 230px; } }
 .gc-tile audio { display: none; }
+
+/* Activar sonido si el navegador lo bloquea, e indicador de voz */
+.unmute-btn { position: absolute; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 16px 24px; border-radius: 999px; background: #fff; color: #111; font-weight: 800; font-size: 1.05rem; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); animation: pulse-btn 1.4s infinite; }
+@keyframes pulse-btn { 50% { transform: translate(-50%, -50%) scale(1.05); } }
+.call-overlay.dm-call .call-peer .avatar { transition: box-shadow .15s; }
+.call-overlay.dm-call.speaking .call-peer .avatar { box-shadow: 0 0 0 6px rgba(52, 211, 153, .85), 0 0 30px rgba(52, 211, 153, .6); }
+.call-overlay.dm-call.speaking.has-video { box-shadow: inset 0 0 0 4px rgba(52, 211, 153, .9); }
+.call-overlay.dm-call.speaking .call-peer h2::after { content: ' 🔊'; }
