@@ -63,6 +63,10 @@ Más adelante habrá **app de móvil** y **app de escritorio para Windows**, cen
   `ANDROID_KEYSTORE_PASSWORD` (clave de firma: la tiene el dueño; **nunca cambiarla**), `GOOGLE_SERVICES_JSON`.
 - **Publicar versión de Android**: subir `androidVersion` en `package.json` → Actions → "App Android" → Run workflow (main) → el APK sale en Releases
   (`ChamuFlac.apk`) → actualizar la fila `android` de `app_versions` (`latest_version`, `download_url`, y `min_version` si es obligatoria).
+- **App ↔ web**: `dm.js` tiene dos vías por conversación (`w.via`): `'tab'` (web, `inbox:<clientId>`, público) y `'user'`
+  (amigos, `user:<número>`, privado). La web registrada escucha también `user:<su número>` (acepta sola a sus amigos) y abre
+  privados con amigos desde el panel Amigos («Hablar»). Cada dispositivo/pestaña tiene un `DEV`: con la misma cuenta abierta
+  en varios sitios, la conversación se queda en el primero que responde (`peerDev`, señales con `to`) y los demás se retiran.
 - **Amigos en la web** (`src/friends.js`): botón "Amigos" (con contador) junto al nick para cuentas registradas: agregar por
   número, aceptar/rechazar, cancelar, eliminar, bloquear. Se consulta al entrar, cada 2 min y al volver a la pestaña.
 - Márgenes del sistema en la app: usar `var(--sat)` / `var(--sab)` (Capacitor 8 inyecta `--safe-area-inset-*`), no `env()` solo.

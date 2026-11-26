@@ -70,13 +70,13 @@ export function createFriends(ctx) {
         `<button class="btn small" data-fr-reject="${f.user_number}">Rechazar</button><button class="btn small primary" data-fr-accept="${f.user_number}">Aceptar</button>`)).join('')}</ul>` : ''}
       <h4 class="fr-sec">Tus amigos</h4>
       ${acc.length ? `<ul class="fr-list">${acc.map((f) => row(f, { text: name(f), ugc: true },
-        `<button class="icon-btn" data-fr-remove="${f.user_number}" title="Eliminar amigo">${icon('trash')}</button><button class="icon-btn" data-fr-block="${f.user_number}" title="Bloquear">${icon('shield-off')}</button>`)).join('')}</ul>`
+        `<button class="btn small primary" data-fr-chat="${f.user_number}">${icon('message')} Hablar</button><button class="icon-btn" data-fr-remove="${f.user_number}" title="Eliminar amigo">${icon('trash')}</button><button class="icon-btn" data-fr-block="${f.user_number}" title="Bloquear">${icon('shield-off')}</button>`)).join('')}</ul>`
         : `<p class="muted small">Aún no tienes amigos. Pulsa «Agregar amigo» y escribe el número de la otra persona: lo ve en la app o en su menú de usuario.</p>`}
       ${sent.length ? `<h4 class="fr-sec">Solicitudes enviadas</h4><ul class="fr-list">${sent.map((f) => row(f, { text: t('Esperando respuesta…') },
         `<button class="btn small" data-fr-cancel="${f.user_number}">Cancelar</button>`)).join('')}</ul>` : ''}
       ${blocked.length ? `<h4 class="fr-sec">Bloqueados</h4><ul class="fr-list">${blocked.map((f) => row(f, { text: fmtNumber(f.user_number) },
         `<button class="btn small" data-fr-unblock="${f.user_number}">Desbloquear</button>`)).join('')}</ul>` : ''}
-      <p class="hint">Para hablar con tus amigos en privado, con avisos en el móvil, usa la app de ChamuFlac para Android.</p>`;
+      <p class="hint">Con «Hablar» abres un privado con tu amigo, esté en la web o en la app de Android (si tiene la app cerrada, le llega un aviso).</p>`;
   }
   async function onClick(e) {
     const b = e.target.closest('button');
@@ -85,8 +85,9 @@ export function createFriends(ctx) {
     if ('frClose' in d) return b.closest('.dialog-wrap').remove();
     if ('frCopy' in d) return navigator.clipboard?.writeText(String(ctx.myNumber())).then(() => toast(t('Número copiado')));
     if ('frAdd' in d) return addDialog();
-    const f = friends.find((x) => String(x.user_number) === (d.frAccept || d.frReject || d.frCancel || d.frRemove || d.frBlock || d.frUnblock));
+    const f = friends.find((x) => String(x.user_number) === (d.frAccept || d.frReject || d.frCancel || d.frRemove || d.frBlock || d.frUnblock || d.frChat));
     if (!f) return;
+    if (d.frChat) { b.closest('.dialog-wrap').remove(); return ctx.openChat(f); }
     const run = async (fn, args, ok) => {
       b.disabled = true;
       const { error } = await supabase.rpc(fn, args);
@@ -134,18 +135,20 @@ export function createFriends(ctx) {
     await refresh();
     open();
   }
-  /** Aviso push al móvil del otro (si tiene la app). */
-  async function notifyFriendRequest(number) {
+  const notifyFriendRequest = (number) => notify(number, 'friend', 'friend');
+  /** Aviso push al móvil del otro (si tiene la app): solicitud de amistad, privado o llamada. */
+  async function notify(number, kind, id, video = false) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       await fetch(`${SUPABASE_URL}/functions/v1/push`, {
         method: 'POST',
         headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: number, kind: 'friend', id: 'friend' }),
+        body: JSON.stringify({ to: Number(number), kind, id, video }),
       });
     } catch { /* sin aviso */ }
   }
+  const isFriend = (number) => friends.some((f) => String(f.user_number) === String(number) && f.status === 'accepted');
 
-  return { start, stop, open, refresh };
+  return { start, stop, open, refresh, notify, isFriend };
 }

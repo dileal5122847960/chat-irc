@@ -61,34 +61,48 @@ export function createDM(ctx) {
   const fmtSize = (n) => (n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB');
   const fmtDur = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round(s || 0) % 60).padStart(2, '0')}`;
 
-  /* ---------------- Bandeja de entrada ---------------- */
-  // La web usa una bandeja por pestaña (inbox:<clientId>); la app, una privada por número de
-  // usuario (user:<número>) que solo su dueño puede escuchar y solo sus amigos escribir.
-  const inboxTopic = ctx.inboxTopic || ((cid) => 'inbox:' + cid);
-  const inboxPrivate = !!ctx.inboxPrivate;
+  /* ---------------- Bandejas de entrada ---------------- */
+  // Dos vías para pedir un privado:
+  //  • 'tab'  (web): bandeja pública por pestaña, inbox:<clientId>. Para hablar con alguien del canal.
+  //  • 'user' (amigos, web y app): bandeja privada por número, user:<número>. Solo su dueño la
+  //    escucha y solo sus amigos escriben (RLS). Así la app y la web se encuentran.
+  // DEV identifica este dispositivo o pestaña: si la misma cuenta está abierta en varios sitios,
+  // la conversación se queda en el primero que responde y los demás se retiran.
+  const DEV = crypto.randomUUID().slice(0, 12);
+  const defaultVia = ctx.defaultVia || 'tab';
+  const myNumber = () => (ctx.myNumber ? ctx.myNumber() : null);
+  const selfId = (via) => (via === 'user' ? String(myNumber() ?? '') : state.clientId);
+  const topicFor = (via, cid) => (via === 'user' ? 'user:' + cid : 'inbox:' + cid);
   const carry = new Map(); // conversación anterior con la misma persona (al reconectar)
   const handled = new Set(); // solicitudes ya atendidas (se pueden recibir repetidas)
-  function init() {
-    const ch = supabase.channel(inboxTopic(state.clientId), { config: { private: inboxPrivate, broadcast: { self: false } } });
-    inbox = ch;
-    ch.on('broadcast', { event: 'req' }, ({ payload }) => payload && onRequest(payload))
-      .on('broadcast', { event: 'resp' }, ({ payload }) => payload && onResponse(payload))
+  let friendInbox = null;
+  function listen(via, id, onStatus) {
+    const ch = supabase.channel(topicFor(via, id), { config: { private: via === 'user', broadcast: { self: false } } });
+    const tag = (p) => (p ? { ...p, via } : null);
+    ch.on('broadcast', { event: 'req' }, ({ payload }) => payload && onRequest(tag(payload)))
+      .on('broadcast', { event: 'resp' }, ({ payload }) => payload && onResponse(tag(payload)))
       .on('broadcast', { event: 'cancel' }, ({ payload }) => payload && dismissRequest(payload.id))
-      .subscribe((status, err) => { if (inbox === ch) ctx.onInboxStatus?.(status, err); });
+      .subscribe((status, err) => onStatus?.(ch, status, err));
+    return ch;
   }
-  async function sendTo(cid, event, payload) {
-    const ch = supabase.channel(inboxTopic(cid), { config: { private: inboxPrivate, broadcast: { self: false } } });
+  function init() {
+    if (defaultVia === 'tab') inbox = listen('tab', state.clientId);
+    if (myNumber()) friendInbox = listen('user', myNumber(), (ch, status, err) => { if (friendInbox === ch) ctx.onInboxStatus?.(status, err); });
+  }
+  async function sendTo(via, cid, event, payload) {
+    const ch = supabase.channel(topicFor(via, cid), { config: { private: via === 'user', broadcast: { self: false } } });
     try {
       await ch.httpSend(event, payload); return true;
     } catch { return false; } finally { supabase.removeChannel(ch); }
   }
-  const me = () => ({ from: state.clientId, nick: state.nick, reg: state.registered });
+  const me = (via) => ({ from: selfId(via), nick: state.nick, reg: state.registered, dev: DEV });
   const dmWindows = () => [...state.windows.values()].filter((w) => w.kind === 'dm');
   const findByPeer = (cid) => dmWindows().find((w) => w.peer.cid === cid && w.status !== 'closed' && w.status !== 'rejected');
 
   /** Abre (o enfoca) un privado con una persona del canal. */
   async function requestPrivate(peer) {
-    if (peer.cid === state.clientId) return;
+    peer = { ...peer, via: peer.via || defaultVia };
+    if (peer.cid === selfId(peer.via)) return;
     const existing = state.windows.get('dm:' + peer.cid);
     if (existing && existing.status !== 'closed' && existing.status !== 'rejected') return ctx.activate(existing.key);
     if (existing) closeWindow(existing, true);
@@ -100,21 +114,21 @@ export function createDM(ctx) {
     if (peer.autoCall !== undefined) w.autoCall = peer.autoCall; // llamar en cuanto conecte
     ctx.activate(w.key);
     sysLine(w, `Esperando a que <b>${esc(peer.nick)}</b> acepte la conversación privada…`);
-    const ok = await sendTo(peer.cid, 'req', { id: w.id, ...me() });
+    const ok = await sendTo(w.via, peer.cid, 'req', { id: w.id, ...me(w.via) });
     if (!ok) { setStatus(w, 'closed'); return sysLine(w, 'No se pudo enviar la solicitud.', 'err'); }
     ctx.onRequestSent?.(peer, w);
-    // En la app, la solicitud se repite mientras se espera: llega en cuanto el amigo abre la app
-    if (ctx.resendRequests) {
+    // Entre amigos, la solicitud se repite mientras se espera: llega en cuanto el amigo abre la app
+    if (ctx.resendRequests && w.via === 'user') {
       w.resend = setInterval(() => {
         if (w.status !== 'pending') return clearInterval(w.resend);
-        sendTo(peer.cid, 'req', { id: w.id, ...me() });
+        sendTo(w.via, peer.cid, 'req', { id: w.id, ...me(w.via) });
       }, ctx.resendRequests * 1000);
     }
     w.timer = setTimeout(() => {
       if (w.status !== 'pending') return;
       setStatus(w, 'rejected');
       sysLine(w, `<b>${esc(peer.nick)}</b> no respondió.`, 'err');
-      sendTo(peer.cid, 'cancel', { id: w.id });
+      sendTo(w.via, peer.cid, 'cancel', { id: w.id });
     }, REQUEST_TIMEOUT);
   }
 
@@ -152,7 +166,7 @@ export function createDM(ctx) {
     if (retry) {
       const w = state.windows.get(retry.dataset.dmRetry);
       if (!w) return;
-      const person = ctx.findPerson?.(w.peer.nick);
+      const person = w.via === 'user' ? { ...w.peer } : ctx.findPerson?.(w.peer.nick);
       if (!person) return toast(`${w.peer.nick}: ${t('no está conectado ahora mismo.')}`);
       closeWindow(w, true);
       requestPrivate(person);
@@ -170,23 +184,24 @@ export function createDM(ctx) {
     handled.add(id);
     const old = state.windows.get('dm:' + r.from);
     if (old) closeWindow(old, true);
-    const w = makeWindow({ cid: r.from, nick: r.nick, reg: !!r.reg }, r.id, 'callee');
+    const w = makeWindow({ cid: r.from, nick: r.nick, reg: !!r.reg, via: r.via || defaultVia }, r.id, 'callee');
+    if (r.dev) w.peerDev = r.dev;
     setStatus(w, 'connecting');
     if (!background || !state.active || state.active === w.key) ctx.activate(w.key);
     else ctx.onBackgroundOpen?.(w);
     sysLine(w, 'Estableciendo conexión directa…');
     await joinSignaling(w);
-    sendTo(r.from, 'resp', { id: r.id, ok: true, ...me() });
+    sendTo(w.via, r.from, 'resp', { id: r.id, ok: true, ...me(w.via) });
   }
   function reject(id) {
     const r = pendingRequests.get(id);
     dismissRequest(id);
-    if (r) sendTo(r.from, 'resp', { id, ok: false, ...me() });
+    if (r) sendTo(r.via || defaultVia, r.from, 'resp', { id, ok: false, ...me(r.via || defaultVia) });
   }
   /** Acepta una solicitud recibida por otra vía (p. ej. al tocar un aviso push). */
   function acceptExternal(r, opts) {
     if (!r?.id || !r.from || handled.has(r.id) || dmWindows().some((x) => x.id === r.id)) return false;
-    pendingRequests.set(r.id, { ...r, nick: String(r.nick || r.from) });
+    pendingRequests.set(r.id, { ...r, via: r.via || defaultVia, nick: String(r.nick || r.from) });
     accept(r.id, opts);
     return true;
   }
@@ -194,6 +209,7 @@ export function createDM(ctx) {
     const w = dmWindows().find((x) => x.id === r.id);
     if (!w || w.status !== 'pending') return;
     clearTimeout(w.timer);
+    if (r.dev) w.peerDev = r.dev; // la conversación sigue con el dispositivo que respondió primero
     if (!r.ok) { setStatus(w, 'rejected'); return sysLine(w, `<b>${esc(w.peer.nick)}</b> rechazó la conversación privada.`, 'err'); }
     setStatus(w, 'connecting');
     sysLine(w, `<b>${esc(w.peer.nick)}</b> aceptó. Estableciendo conexión directa…`);
@@ -204,6 +220,7 @@ export function createDM(ctx) {
   function makeWindow(peer, id, role) {
     const w = {
       key: 'dm:' + peer.cid, kind: 'dm', name: peer.nick, peer, id, role, status: 'new',
+      via: peer.via || defaultVia, self: selfId(peer.via || defaultVia),
       lines: [], unread: 0, mention: false, last: null,
       rt: null, pc: null, dc: null, polite: role === 'callee', makingOffer: false, ignoreOffer: false,
       sendQueue: Promise.resolve(), incoming: new Map(), call: null,
@@ -253,11 +270,16 @@ export function createDM(ctx) {
   /* ---------------- Señalización y conexión WebRTC ---------------- */
   async function joinSignaling(w) {
     await ctx.ensureIce?.();
-    const rt = supabase.channel('dm:' + w.id, { config: { broadcast: { self: false }, presence: { key: state.clientId } } });
+    const rt = supabase.channel('dm:' + w.id, { config: { broadcast: { self: false }, presence: { key: w.self } } });
     w.rt = rt;
-    rt.on('broadcast', { event: 'sig' }, ({ payload }) => payload && payload.from === w.peer.cid && handleSignal(w, payload))
+    rt.on('broadcast', { event: 'sig' }, ({ payload: p }) => {
+      if (!p || p.from !== w.peer.cid) return;
+      if (p.to && p.to !== DEV) return lostToOtherDevice(w); // respondió antes otro dispositivo de esta cuenta
+      if (!fromPeerDevice(w, p)) return;
+      handleSignal(w, p);
+    })
       .on('broadcast', { event: 'relay' }, ({ payload: m }) => {
-        if (!m || m.from !== w.peer.cid) return;
+        if (!m || m.from !== w.peer.cid || !fromPeerDevice(w, m) || (m.to && m.to !== DEV)) return;
         if (m.t === 'relay-on') return enableRelay(w, false);
         if (!w.relay) enableRelay(w, false);
         if (m.t === 'chunk' && typeof m.d === 'string') return onChunk(w, b64dec(m.d));
@@ -276,9 +298,25 @@ export function createDM(ctx) {
     // Si en 15 s no hay conexión directa, se pasa al plan B (a través del servidor)
     w.connectTimer = setTimeout(() => { if (w.status === 'connecting') enableRelay(w, true); }, 15000);
   }
+  /** ¿Viene del dispositivo con el que hablamos? (si la otra cuenta está abierta en varios sitios) */
+  function fromPeerDevice(w, p) {
+    if (!p.dev) return true; // versiones antiguas
+    if (!w.peerDev) w.peerDev = p.dev;
+    return p.dev === w.peerDev;
+  }
+  /** Esta cuenta también está en otro dispositivo, que respondió antes: este se retira. */
+  function lostToOtherDevice(w) {
+    if (w.status === 'closed' || w.role !== 'callee' || w.everDirect) return;
+    const wasActive = state.active === w.key;
+    closeWindow(w, true);
+    carry.delete(w.key);
+    if (wasActive) ctx.activate('status');
+    toast(`${w.peer.nick}: ${t('la conversación sigue en otro dispositivo.')}`);
+  }
+  const route = (w) => ({ from: w.self, dev: DEV, ...(w.peerDev ? { to: w.peerDev } : {}) });
   const signal = (w, data) => {
     (w.dbg ||= []).push('tx:' + (data.description?.type || 'ice'));
-    return w.rt?.send({ type: 'broadcast', event: 'sig', payload: { from: state.clientId, ...data } }).then((r) => { if (r !== 'ok') w.dbg.push('tx-fail:' + r); });
+    return w.rt?.send({ type: 'broadcast', event: 'sig', payload: { ...route(w), ...data } }).then((r) => { if (r !== 'ok') w.dbg.push('tx-fail:' + r); });
   };
 
   function createPeer(w) {
@@ -377,7 +415,7 @@ export function createDM(ctx) {
   }
   const sendJSON = (w, obj) => {
     if (w.dc?.readyState === 'open') return w.dc.send(JSON.stringify(obj));
-    if (w.relay) return w.rt?.send({ type: 'broadcast', event: 'relay', payload: { ...obj, from: state.clientId } });
+    if (w.relay) return w.rt?.send({ type: 'broadcast', event: 'relay', payload: { ...obj, ...route(w) } });
   };
   /**
    * Plan B: si no hay conexión directa (redes que la bloquean y sin TURN disponible), el
@@ -388,7 +426,7 @@ export function createDM(ctx) {
     if (w.relay || w.status === 'closed' || w.status === 'rejected' || !w.rt) return;
     w.relay = true;
     clearTimeout(w.connectTimer);
-    if (announce) w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'relay-on', from: state.clientId } });
+    if (announce) w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'relay-on', ...route(w) } });
     if (w.status !== 'away') setStatus(w, 'open');
     sysLine(w, `${icon('unlock')} ` + esc(t(w.everDirect
       ? 'Se perdió la conexión directa. Mientras se intenta recuperar, la conversación sigue a través del servidor (sin cifrado de extremo a extremo; nada se guarda). Las llamadas no están disponibles en este modo.'
@@ -679,7 +717,7 @@ export function createDM(ctx) {
         for (let off = 0; off < file.size; off += RELAY_CHUNK) {
           if (!w.relay || !w.rt) return;
           const buf = await file.slice(off, off + RELAY_CHUNK).arrayBuffer();
-          await w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'chunk', d: b64enc(buf), from: state.clientId } });
+          await w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'chunk', d: b64enc(buf), ...route(w) } });
           progress(f.fid, Math.min(1, (off + buf.byteLength) / file.size));
           await new Promise((r) => setTimeout(r, 70)); // respeta el límite de mensajes por segundo
         }
@@ -1014,7 +1052,7 @@ export function createDM(ctx) {
   function closeWindow(w, silent = false) {
     clearTimeout(w.timer);
     clearInterval(w.resend);
-    if (w.status === 'pending' && !silent) sendTo(w.peer.cid, 'cancel', { id: w.id });
+    if (w.status === 'pending' && !silent) sendTo(w.via, w.peer.cid, 'cancel', { id: w.id });
     if (w.call) hangup(w);
     sendJSON(w, { t: 'bye' });
     clearTimeout(w.goneTimer); clearTimeout(w.retryTimer); clearTimeout(w.connectTimer);
@@ -1028,7 +1066,8 @@ export function createDM(ctx) {
   function closeAll() {
     for (const w of dmWindows()) closeWindow(w, true);
     if (inbox) supabase.removeChannel(inbox);
-    inbox = null;
+    if (friendInbox) supabase.removeChannel(friendInbox);
+    inbox = friendInbox = null;
     pendingRequests.clear();
   }
   function onNickChange(nick) { for (const w of dmWindows()) sendJSON(w, { t: 'nick', nick }); }

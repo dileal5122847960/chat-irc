@@ -303,8 +303,8 @@ function dmContext() {
     },
     // Bandeja privada por número. Mientras se espera, la solicitud se repite cada 4 s: así llega
     // en cuanto el amigo abre la app (por ejemplo, al tocar el aviso push).
-    inboxTopic: (cid) => 'user:' + cid,
-    inboxPrivate: true,
+    defaultVia: 'user',
+    myNumber: () => state.clientId,
     resendRequests: 4,
     onInboxStatus: (status) => { state.inboxOk = status === 'SUBSCRIBED'; renderConn(); },
     // Entre amigos no hace falta aceptar: la conversación se abre sola

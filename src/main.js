@@ -1317,6 +1317,12 @@ const dm = createDM({
     for (const w of state.windows.values()) for (const p of w.people?.values() || []) if (!p.me && p.nick.toLowerCase() === nick.toLowerCase()) return { cid: p.cid, nick: p.nick, reg: p.reg };
     return null;
   }, ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY), renderChanList: () => renderChanList(), updateTitle: () => updateTitle(),
+  // Amigos (también desde la app de Android): bandeja privada por número de usuario
+  myNumber: () => (state.registered ? state.account?.number : null),
+  autoAccept: (r) => r.via === 'user' && friends.isFriend(r.from),
+  resendRequests: 4,
+  onRequestSent: (peer, w) => { if (w.via === 'user') friends.notify(peer.cid, w.autoCall !== undefined ? 'call' : 'dm', w.id, !!w.autoCall); },
+  onBackgroundOpen: (w) => { beep(); toast(t('{nick} abrió una conversación privada contigo.', { nick: w.peer.nick })); },
 });
 function openPrivate(cid) {
   const w = state.windows.get(state.active);
@@ -1449,6 +1455,7 @@ const gc = createGroupCall({ state, esc, icon, avatar, toast, t, ensureIce: () =
 const friends = createFriends({
   supabase, esc, icon, avatar, t, toast, openDialog, closeOverlays, beep, SUPABASE_URL, SUPABASE_KEY,
   myNumber: () => state.account?.number,
+  openChat: (f) => dm.requestPrivate({ cid: String(f.user_number), nick: f.nick, reg: true, via: 'user' }),
   onCount: (n) => {
     const b = document.getElementById('friends-badge');
     if (b) { b.textContent = n || ''; b.classList.toggle('hidden', !n); }

@@ -132,3 +132,4 @@ button.m-row:active, .m-row-open:active { background: var(--hover); }
 .call-overlay.dm-call .call-top { top: calc(12px + var(--sat)); }
 .call-overlay.dm-call .call-e2e { bottom: calc(10px + var(--sab)); }
 .lightbox { padding-top: var(--sat); padding-bottom: var(--sab); }
+.app.m-chat.in-dm .chat-head { height: auto; }
