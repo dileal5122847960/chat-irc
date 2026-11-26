@@ -67,28 +67,18 @@ export function createDM(ctx) {
   const inboxTopic = ctx.inboxTopic || ((cid) => 'inbox:' + cid);
   const inboxPrivate = !!ctx.inboxPrivate;
   const carry = new Map(); // conversación anterior con la misma persona (al reconectar)
-  const handled = new Set(); // solicitudes ya atendidas (la repetición puede volver a entregarlas)
-  function init(useReplay = true) {
-    const replay = useReplay ? ctx.inboxReplay?.() : null;
-    const ch = supabase.channel(inboxTopic(state.clientId), { config: { private: inboxPrivate, broadcast: { self: false, ...(replay || {}) } } });
+  const handled = new Set(); // solicitudes ya atendidas (se pueden recibir repetidas)
+  function init() {
+    const ch = supabase.channel(inboxTopic(state.clientId), { config: { private: inboxPrivate, broadcast: { self: false } } });
     inbox = ch;
     ch.on('broadcast', { event: 'req' }, ({ payload }) => payload && onRequest(payload))
       .on('broadcast', { event: 'resp' }, ({ payload }) => payload && onResponse(payload))
       .on('broadcast', { event: 'cancel' }, ({ payload }) => payload && dismissRequest(payload.id))
-      .subscribe((status, err) => {
-        if (inbox !== ch) return;
-        // Si el servidor no admite la repetición de mensajes, se reintenta sin ella
-        if (replay && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')) { supabase.removeChannel(ch); return init(false); }
-        ctx.onInboxStatus?.(status, err);
-      });
+      .subscribe((status, err) => { if (inbox === ch) ctx.onInboxStatus?.(status, err); });
   }
   async function sendTo(cid, event, payload) {
     const ch = supabase.channel(inboxTopic(cid), { config: { private: inboxPrivate, broadcast: { self: false } } });
     try {
-      // En la app, la solicitud se guarda unos minutos para entregarla si el amigo abre la app al tocar el aviso
-      if (ctx.persistRequests && event === 'req') {
-        try { await ch.httpSend(event, payload, { persist: { ttl: ctx.persistRequests } }); return true; } catch { /* sin almacenamiento: envío normal */ }
-      }
       await ch.httpSend(event, payload); return true;
     } catch { return false; } finally { supabase.removeChannel(ch); }
   }
@@ -113,6 +103,13 @@ export function createDM(ctx) {
     const ok = await sendTo(peer.cid, 'req', { id: w.id, ...me() });
     if (!ok) { setStatus(w, 'closed'); return sysLine(w, 'No se pudo enviar la solicitud.', 'err'); }
     ctx.onRequestSent?.(peer, w);
+    // En la app, la solicitud se repite mientras se espera: llega en cuanto el amigo abre la app
+    if (ctx.resendRequests) {
+      w.resend = setInterval(() => {
+        if (w.status !== 'pending') return clearInterval(w.resend);
+        sendTo(peer.cid, 'req', { id: w.id, ...me() });
+      }, ctx.resendRequests * 1000);
+    }
     w.timer = setTimeout(() => {
       if (w.status !== 'pending') return;
       setStatus(w, 'rejected');
@@ -1016,6 +1013,7 @@ export function createDM(ctx) {
   /** Cierra la ventana (botón ✕ o "Cerrar conversación"). */
   function closeWindow(w, silent = false) {
     clearTimeout(w.timer);
+    clearInterval(w.resend);
     if (w.status === 'pending' && !silent) sendTo(w.peer.cid, 'cancel', { id: w.id });
     if (w.call) hangup(w);
     sendJSON(w, { t: 'bye' });

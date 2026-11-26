@@ -116,3 +116,6 @@ button.m-row:active, .m-row-open:active { background: var(--hover); }
 .m-newver b { color: var(--accent-2); }
 .m-empty .btn { margin-top: 10px; }
 .m-auth-head .brand-logo { display: block; margin: 0 auto; }
+.m-chat .chat-title { min-width: 0; }
+.m-chat .chat-title p { max-width: 100%; overflow: hidden; }
+.m-chat .dm-status { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

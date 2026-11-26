@@ -301,11 +301,11 @@ function dmContext() {
       const f = [...state.friends.values()].find((x) => x.status === 'accepted' && x.nick.toLowerCase() === nick.toLowerCase());
       return f ? { cid: String(f.number), nick: f.nick, reg: true } : null;
     },
-    // Bandeja privada por número; las solicitudes se guardan 1 minuto por si el amigo abre la app al tocar el aviso
+    // Bandeja privada por número. Mientras se espera, la solicitud se repite cada 4 s: así llega
+    // en cuanto el amigo abre la app (por ejemplo, al tocar el aviso push).
     inboxTopic: (cid) => 'user:' + cid,
     inboxPrivate: true,
-    persistRequests: 60,
-    inboxReplay: () => ({ replay: { since: Date.now() - 60 * 1000, limit: 20 } }),
+    resendRequests: 4,
     onInboxStatus: (status) => { state.inboxOk = status === 'SUBSCRIBED'; renderConn(); },
     // Entre amigos no hace falta aceptar: la conversación se abre sola
     autoAccept: (r) => state.friends.get(String(r.from))?.status === 'accepted',
@@ -761,7 +761,7 @@ async function copyText(text, msg) {
   try { await navigator.clipboard.writeText(text); toast(msg || t('Copiado.')); } catch { toast(text); }
 }
 
-if (import.meta.env.DEV) window.__app = { state, supabase, handleTap, openChat };
+if (import.meta.env.DEV) window.__app = { state, supabase, handleTap, openChat, createClient };
 
 /* ---------- ¡En marcha! ---------- */
 renderSplash();
