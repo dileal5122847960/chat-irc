@@ -1,7 +1,7 @@
 {
   "name": "chamuflac",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -34,6 +34,6 @@
     "jsqr": "^1.4.0",
     "qrcode-generator": "^1.5.2"
   },
-  "androidVersion": "1.0.7",
-  "windowsVersion": "1.0.3"
+  "androidVersion": "1.1.0",
+  "windowsVersion": "1.1.0"
 }

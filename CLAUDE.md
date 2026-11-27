@@ -252,6 +252,25 @@ archivo esté en Releases). Subir `androidVersion` / `windowsVersion` en package
 8. Opcional: dominio `chamuflac.vercel.app`; certificado de firma de código para Windows (quita el aviso SmartScreen);
    traductor de pago cuando haya muchos usuarios (MyMemory tiene cupo diario por conexión).
 
+## Hecho el 27-11-2026 (versión 1.1.0: web, Android y Windows)
+
+- **Grupos de amigos** (`src/groups.js`, migración 0014): hasta 50, creados con amigos; cifrado E2E por dispositivo
+  (mailbox.seal/open), canal privado `group:<id>` (RLS), buzón `mail_send_group` + push `kind: 'group'` para quien no está.
+  Ventanas en dm.js con `w.group` (kind 'dm', clave `g:<id>`): nick en burbuja, reacciones de varios, marcas cuando
+  les llegó/leyeron todos. Menú: Miembros, Agregar, Cambiar nombre, Salir. Solo texto/emoji/stickers (sin fotos ni llamadas).
+- **Avisos push del navegador** (`src/webpush.js`, `public/sw.js`): FCM web; config pública `FIREBASE_WEB` y `VAPID_KEY`
+  en `src/config.js`; se activan en el menú de usuario. La función `push` añade `webpush` y tag por grupo.
+- **Captcha Turnstile** (`src/captcha.js`, `TURNSTILE_SITE_KEY`): al ingresar/crear cuenta con correo (web y apps). **Aún NO
+  activado en Supabase**: activarlo (Auth → Attack Protection → Turnstile + Secret Key) solo cuando la 1.1.0 esté publicada,
+  y subir `min_version` de las apps (las viejas no envían captcha).
+- **Moderación de canales** (`src/moderation.js`, migración 0015): bloquear con duración (servidor; canales con contraseña
+  lo impide `channel_access`), denuncias (`reports`, 10/hora), ignorar (local) y freno anti-inundación (8 msgs/10 s).
+- **Momentos 24 h** (`src/moments.js`, migración 0016): texto/foto cifrados (AES-GCM) en el dispositivo; clave sellada
+  por dispositivo (`moment_keys`); foto cifrada en Storage privado `moments/<número>/<id>.bin`; «Visto por»; la app del
+  dueño borra los archivos caducados. Ojo: con el cliente de Supabase, una llamada `rpc()` sin `await`/`.then` no se envía.
+- Migraciones 0013–0016 aplicadas por el dueño el 27-11-2026. Función `push` redesplegada.
+- Pendiente: llamadas en grupos, huella dactilar, llamada a pantalla completa con el teléfono bloqueado.
+
 ## Ideas propuestas (no hechas)
 
 Blindar Realtime con canales privados/RLS (hoy los mensajes, cargos temporales y expulsiones no los
