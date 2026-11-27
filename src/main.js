@@ -11,7 +11,7 @@ import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
 import { mountAds } from './ads.js';
-import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from './profile.js';
+import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from './profile.js';
 
 setLang(initialLang());
 applyDisplay(); // tamaño de letra y fondo elegidos en este dispositivo
@@ -1297,6 +1297,7 @@ function userMenu(anchor) {
   items.push(
     { label: 'Mi perfil', lead: photos.avatar('me', state.nick), hint: acc ? `${acc.firstName} ${acc.lastName}` : t(photos.mine() ? 'La ven en tus privados' : 'Sin foto'), onClick: () => profileMenu(anchor) },
     { label: 'Sonidos', icon: 'phone', hint: `${t(TONES.msg[sounds.get('msg')].label)} · ${t(TONES.call[sounds.get('call')].label)}`, onClick: () => soundsMenu(anchor) },
+    { label: 'Color de la app', lead: accentSwatch(display.accent()), hint: t(ACCENTS[display.accent()].label), onClick: () => accentMenu(anchor) },
     { label: 'Tamaño de letra', icon: 'edit', hint: t(FONT_LABELS[display.font()]), onClick: () => fontMenu(anchor) },
     { label: 'Fondo del chat', icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), onClick: () => wallMenu(anchor) },
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
@@ -1358,6 +1359,9 @@ function toneMenu(anchor, kind) {
     label: TONES[kind][id].label, chosen: sounds.get(kind) === id, icon: id === 'silencio' ? 'mic-off' : 'play',
     onClick: () => { sounds.set(kind, id); playTone(kind, id); setTimeout(() => toneMenu(anchor, kind), 150); },
   })), { title: esc(t(kind === 'msg' ? 'Tono de mensajes' : 'Tono de llamadas')) });
+}
+function accentMenu(anchor) {
+  openMenu(anchor, Object.keys(ACCENTS).map((k) => ({ label: ACCENTS[k].label, chosen: display.accent() === k, lead: accentSwatch(k), onClick: () => { display.setAccent(k); accentMenu(anchor); } })), { title: esc(t('Color de la app')) });
 }
 function fontMenu(anchor) {
   openMenu(anchor, Object.keys(FONT_SIZES).map((k) => ({ label: FONT_LABELS[k], chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, onClick: () => display.setFont(k) })), { title: esc(t('Tamaño de letra')) });

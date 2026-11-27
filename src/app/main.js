@@ -18,7 +18,7 @@ import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
 import { mountAds } from '../ads.js';
 import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
-import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from '../profile.js';
+import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from '../profile.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
 import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, loopTone, playTone, sounds, TONES } from '../common.js';
@@ -265,6 +265,7 @@ async function afterLogin(user) {
   state.account = { id: user.id, email: user.email, nick: p.nick, number: p.user_number, firstName: p.first_name || '', lastName: p.last_name || '', attitude: p.attitude || '' };
   if (!state.account.firstName || !state.account.lastName) return renderAuth('setup');
   pendingUser = null;
+  if (pin.isSet()) return showLock(() => enterApp()); // bloqueo con PIN al abrir
   enterApp();
 }
 
@@ -296,6 +297,7 @@ function enterApp() {
   mailbox.register(state.account.id).then(fetchMail); // dispositivo + clave del buzón; luego, mensajes pendientes
   loadFriends().then(() => { for (const d of state.pendingTaps.splice(0)) handleTap(d); });
   initPush({ onToken: (token) => mailbox.register(state.account.id, token), onTap: handleTap });
+  if (!store.get('onboarded')) showOnboarding();
 }
 
 function dmContext() {
@@ -382,6 +384,97 @@ function handleTap(d) {
   openChat(from);
 }
 
+/* ---------- Bloqueo con PIN (solo en este dispositivo) ---------- */
+const pin = {
+  key: () => 'pin:' + (state.account?.id || ''),
+  isSet: () => !!store.get(pin.key()),
+  async hash(p, salt) { const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + ':' + p)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join(''); },
+  async set(p) { const salt = crypto.randomUUID(); store.set(pin.key(), JSON.stringify({ salt, h: await pin.hash(p, salt) })); },
+  async check(p) { try { const { salt, h } = JSON.parse(store.get(pin.key())); return (await pin.hash(p, salt)) === h; } catch { return false; } },
+  clear: () => store.set(pin.key(), null),
+};
+let locked = false;
+/** Pantalla de bloqueo: tapa todo hasta escribir el PIN. */
+function showLock(onOk) {
+  if (locked) return;
+  locked = true;
+  let fails = 0, waitUntil = 0;
+  const el = document.createElement('div');
+  el.className = 'pin-lock';
+  el.innerHTML = `<div class="pin-card">${logoSvg(64, 'pl')}<h2>${esc(t('ChamuFlac está bloqueada'))}</h2>
+    <form><input type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="••••" aria-label="PIN"><p class="m-msg error"></p>
+    <button class="btn primary block">${esc(t('Desbloquear'))}</button></form>
+    <button type="button" class="link" data-forgot>${esc(t('¿Olvidaste el PIN?'))}</button></div>`;
+  document.body.appendChild(el);
+  const input = el.querySelector('input'), msg = el.querySelector('.m-msg');
+  setTimeout(() => input.focus(), 50);
+  el.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault();
+    if (Date.now() < waitUntil) { msg.textContent = t('Espera unos segundos e inténtalo de nuevo.'); return; }
+    if (await pin.check(input.value)) { el.remove(); locked = false; onOk?.(); return; }
+    fails++; input.value = '';
+    if (fails >= 5) { waitUntil = Date.now() + 30000; fails = 0; msg.textContent = t('Demasiados intentos. Espera 30 segundos.'); }
+    else msg.textContent = t('PIN incorrecto.');
+  };
+  el.querySelector('[data-forgot]').onclick = async () => {
+    const ok = await openDialog({ title: t('¿Olvidaste el PIN?'), text: esc(t('Cierra la sesión y vuelve a entrar con tu correo y contraseña. El PIN se borra de este dispositivo.')), confirm: t('Cerrar sesión'), danger: true });
+    if (!ok) return;
+    pin.clear(); el.remove(); locked = false; logout();
+  };
+}
+// Al volver tras más de un minuto en segundo plano, se pide el PIN otra vez
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (state.ready && pin.isSet() && hiddenAt && Date.now() - hiddenAt > 60000) showLock();
+});
+function pinMenu() {
+  openMenu(null, pin.isSet() ? [
+    { label: t('Cambiar PIN'), icon: 'edit', run: setPinDialog },
+    { label: t('Quitar el bloqueo'), icon: 'unlock', danger: true, run: async () => {
+      const v = await openDialog({ title: t('Quitar el bloqueo'), fields: [{ name: 'p', label: t('PIN actual'), inputmode: 'numeric', type: 'password', max: 8 }], confirm: t('Quitar'), danger: true, validate: async ({ p }) => ((await pin.check(p)) ? '' : esc(t('PIN incorrecto.'))) });
+      if (v) { pin.clear(); toast(t('Bloqueo desactivado.')); }
+    } },
+  ] : [{ label: t('Activar bloqueo con PIN'), icon: 'lock', run: setPinDialog }],
+  `<b>${esc(t('Bloqueo con PIN'))}</b><small>${esc(t('Pide un PIN al abrir la app y al volver a ella después de un minuto. Solo se guarda en este dispositivo.'))}</small>`);
+}
+async function setPinDialog() {
+  const v = await openDialog({
+    title: t('Elige un PIN'), text: esc(t('De 4 a 8 números. Si lo olvidas, tendrás que volver a iniciar sesión.')),
+    fields: [{ name: 'p1', label: t('PIN'), inputmode: 'numeric', type: 'password', max: 8 }, { name: 'p2', label: t('Repite el PIN'), inputmode: 'numeric', type: 'password', max: 8 }],
+    confirm: t('Guardar'),
+    validate: ({ p1, p2 }) => (!/^\d{4,8}$/.test(p1) ? esc(t('El PIN tiene que tener de 4 a 8 números.')) : p1 !== p2 ? esc(t('Los dos PIN no coinciden.')) : ''),
+  });
+  if (!v) return;
+  await pin.set(v.p1);
+  toast(t('Bloqueo con PIN activado.'));
+}
+
+/* ---------- Bienvenida (solo la primera vez) ---------- */
+function showOnboarding() {
+  const slides = [
+    ['🔢', t('Tu número'), t('Tienes un número de 8 dígitos. Compártelo (o tu código QR) para que tus amigos te agreguen. Tu correo nunca se muestra.')],
+    ['🔒', t('Privados de verdad'), t('Lo que hablas con tus amigos va cifrado de extremo a extremo y no se guarda en ningún servidor. Ni nosotros podemos leerlo.')],
+    ['✨', t('Hazla tuya'), t('Pon tu foto y tu actitud, elige tonos, colores y fondo. Prueba el «+» del chat: juegos, pizarra y más.')],
+  ];
+  let i = 0;
+  const el = document.createElement('div');
+  el.className = 'onboard';
+  const draw = () => {
+    const [ico, title, text] = slides[i];
+    el.innerHTML = `<div class="onboard-card"><div class="onboard-ico">${ico}</div><h2>${esc(title)}</h2><p>${esc(text)}</p>
+      <div class="onboard-dots">${slides.map((_, k) => `<i class="${k === i ? 'on' : ''}"></i>`).join('')}</div>
+      <button type="button" class="btn primary block" data-next>${esc(t(i < slides.length - 1 ? 'Siguiente' : 'Empezar'))}</button>
+      ${i < slides.length - 1 ? `<button type="button" class="link" data-skip>${esc(t('Saltar'))}</button>` : ''}</div>`;
+  };
+  draw();
+  document.body.appendChild(el);
+  el.onclick = (e) => {
+    if (e.target.closest('[data-skip]') || (e.target.closest('[data-next]') && i === slides.length - 1)) { store.set('onboarded', '1'); el.remove(); return; }
+    if (e.target.closest('[data-next]')) { i++; draw(); }
+  };
+}
+
 /* ---------- Estructura de la pantalla ---------- */
 function renderShell() {
   root.innerHTML = `<div class="mapp" id="mapp">
@@ -402,6 +495,7 @@ function renderShell() {
       <button class="fab" id="add-friend" title="Agregar amigo">${icon('user-plus')}</button>
     </section>
     <div class="app m-chat hidden" id="app">
+      <div class="m-chat-empty">${logoSvg(64, 'em')}<b>${esc(t('Elige una conversación'))}</b><small>${esc(t('Tus privados están cifrados de extremo a extremo y no se guardan en ningún servidor.'))}</small></div>
       <main class="chat">
         <header class="chat-head">
           <button class="icon-btn" id="back-btn" title="Volver">${icon('back')}</button>
@@ -511,9 +605,11 @@ function renderLists() {
   const incoming = [...state.friends.values()].filter((f) => f.status === 'pending' && !f.byMe);
   document.getElementById('badge-chats').textContent = unread ? (unread > 99 ? '99+' : unread) : '';
   document.getElementById('badge-friends').textContent = incoming.length || '';
-  if (state.active !== 'status') return; // la lista se pinta al volver a la portada
+  if (state.active !== 'status' && !wide()) return; // la lista se pinta al volver a la portada (o siempre, en dos columnas)
   list.innerHTML = state.tab === 'chats' ? chatsHtml(chats) : friendsHtml(incoming);
 }
+const wide = () => matchMedia('(min-width: 880px)').matches; // dos columnas: lista + conversación
+addEventListener('resize', () => renderLists());
 function chatsHtml(chats) {
   if (!chats.length) {
     return `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
@@ -523,7 +619,7 @@ function chatsHtml(chats) {
   return chats.map((w) => {
     const last = [...w.msgs.values()].pop();
     const sub = last ? (last.mine ? '✓ ' : '') + previewText(last) : dm.statusText(w);
-    return `<button class="m-row" data-chat="${esc(w.peer.cid)}">
+    return `<button class="m-row ${w.key === state.active ? 'active' : ''}" data-chat="${esc(w.peer.cid)}">
       <span class="m-av">${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<i class="dm-dot ${w.status}"></i></span>
       <span class="m-row-main"><b class="ugc">${esc(w.peer.nick)}</b><small class="${last ? 'ugc' : ''}">${esc(sub)}</small></span>
       ${w.call ? `<span class="m-row-ico">${icon('phone')}</span>` : ''}
@@ -704,7 +800,7 @@ function openDialog({ title, text = '', fields = [], confirm = 'Aceptar', danger
     const wrap = document.createElement('div');
     wrap.className = 'dialog-wrap';
     wrap.innerHTML = `<form class="dialog m-dialog" novalidate><h3>${esc(title)}</h3>${text ? `<p class="muted">${text}</p>` : ''}
-      ${fields.map((f) => `<label>${esc(f.label)}<input name="${f.name}" value="${esc(f.value || '')}" maxlength="${f.max || 100}" ${f.inputmode ? `inputmode="${f.inputmode}"` : ''} placeholder="${esc(f.placeholder || '')}"></label>`).join('')}
+      ${fields.map((f) => `<label>${esc(f.label)}<input name="${f.name}" type="${f.type || 'text'}" value="${esc(f.value || '')}" maxlength="${f.max || 100}" ${f.inputmode ? `inputmode="${f.inputmode}"` : ''} placeholder="${esc(f.placeholder || '')}"></label>`).join('')}
       <p class="m-msg error" data-err></p>
       <div class="dialog-actions"><button type="button" class="btn" data-cancel>Cancelar</button><button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${esc(confirm)}</button></div></form>`;
     document.body.appendChild(wrap);
@@ -830,6 +926,7 @@ function accountMenu(anchor) {
   openMenu(anchor, [
     { label: t('Mi perfil'), lead: photos.avatar('me', a.nick), hint: `${a.firstName} ${a.lastName} · ${fmtNumber(a.number)}`, run: profileSheet },
     { label: t('Sonidos'), icon: 'phone', hint: `${t(TONES.msg[sounds.get('msg')].label)} · ${t(TONES.call[sounds.get('call')].label)}`, run: soundsMenu },
+    { label: t('Color de la app'), lead: accentSwatch(display.accent()), hint: t(ACCENTS[display.accent()].label), run: accentMenu },
     { label: t('Tamaño de letra'), icon: 'edit', hint: t(FONT_LABELS[display.font()]), run: fontMenu },
     { label: t('Fondo del chat'), icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), run: wallMenu },
     { label: t('Idioma'), icon: 'globe', hint: LANGS[getLang()], run: () => languageMenu(() => renderLists()) },
@@ -866,6 +963,7 @@ function profileSheet() {
     { label: t('Actitud'), icon: 'sparkle', hint: a.attitude || t('Escribe una frase para tus amigos'), run: attitudeDialog },
     { label: t('Cambiar mi nick'), icon: 'at', hint: a.nick, run: changeNickDialog },
     { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
+    { label: t('Bloqueo con PIN'), icon: 'lock', hint: t(pin.isSet() ? 'Activado' : 'Desactivado'), run: pinMenu },
     { label: t('Copiar mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
   ], `<div class="profile-card">${photos.avatar('me', a.nick)}<b class="ugc">${esc(a.nick)}</b><small>${esc(t('Nick'))}</small><span class="ugc">${esc(`${a.firstName} ${a.lastName}`)}</span><small>${esc(t('Nombre y apellido (solo lo ven tus amigos)'))}</small>${a.attitude ? `<span class="attitude big ugc">“${esc(a.attitude)}”</span>` : ''}
     <small>${esc(t('Así te ven tus amigos en los privados. La foto no se guarda en ningún servidor.'))}</small></div>`);
@@ -883,6 +981,9 @@ function toneMenu(kind) {
     label: t(TONES[kind][id].label), chosen: sounds.get(kind) === id, icon: id === 'silencio' ? 'mic-off' : 'play',
     run: () => { sounds.set(kind, id); playTone(kind, id); setTimeout(() => toneMenu(kind), 150); },
   })), esc(t(kind === 'msg' ? 'Tono de mensajes' : 'Tono de llamadas')));
+}
+function accentMenu() {
+  openMenu(null, Object.keys(ACCENTS).map((k) => ({ label: t(ACCENTS[k].label), chosen: display.accent() === k, lead: accentSwatch(k), run: () => { display.setAccent(k); accentMenu(); } })), esc(t('Color de la app')));
 }
 function fontMenu() {
   openMenu(null, Object.keys(FONT_SIZES).map((k) => ({ label: t(FONT_LABELS[k]), chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, run: () => display.setFont(k) })), esc(t('Tamaño de letra')));

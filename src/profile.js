@@ -85,7 +85,19 @@ export const WALLPAPERS = {
   arena: { label: 'Arena', css: 'linear-gradient(160deg, #f6d365, #fda085)' },
 };
 
+/** Colores de la app (el rojo es el de ChamuFlac). */
+export const ACCENTS = {
+  rojo: { label: 'Rojo ChamuFlac', a: '', a2: '', g: '' },
+  azul: { label: 'Azul', a: '#2563eb', a2: '#60a5fa', g: 'linear-gradient(135deg, #60a5fa, #1d4ed8)' },
+  verde: { label: 'Verde', a: '#16a34a', a2: '#4ade80', g: 'linear-gradient(135deg, #4ade80, #15803d)' },
+  violeta: { label: 'Violeta', a: '#7c3aed', a2: '#a78bfa', g: 'linear-gradient(135deg, #a78bfa, #6d28d9)' },
+  naranja: { label: 'Naranja', a: '#ea580c', a2: '#fb923c', g: 'linear-gradient(135deg, #fdba74, #c2410c)' },
+  rosa: { label: 'Rosa', a: '#db2777', a2: '#f472b6', g: 'linear-gradient(135deg, #f9a8d4, #be185d)' },
+  turquesa: { label: 'Turquesa', a: '#0d9488', a2: '#2dd4bf', g: 'linear-gradient(135deg, #5eead4, #0f766e)' },
+};
 export const display = {
+  accent: () => (ACCENTS[store.get('accent')] ? store.get('accent') : 'rojo'),
+  setAccent(k) { store.set('accent', k); applyDisplay(); },
   font: () => (FONT_SIZES[store.get('fontSize')] ? store.get('fontSize') : 'normal'),
   wall: () => store.get('wall') || 'clasico',
   setFont(k) { store.set('fontSize', k); applyDisplay(); },
@@ -100,6 +112,11 @@ export const display = {
 export function applyDisplay() {
   const root = document.documentElement;
   root.style.setProperty('--fs', String(FONT_SIZES[display.font()]));
+  const ac = ACCENTS[display.accent()];
+  for (const [v, val] of [['--accent', ac.a], ['--accent-2', ac.a2], ['--dm-accent', ac.a2 && ac.a], ['--brand-grad', ac.g]]) {
+    if (val) root.style.setProperty(v, val); else root.style.removeProperty(v);
+  }
+  if (ac.a) root.style.setProperty('--active', ac.a + '29'); else root.style.removeProperty('--active');
   const wall = display.wall();
   const img = wall === 'foto' ? store.get('wallImg') : null;
   const css = img ? `url("${img}") center / cover` : WALLPAPERS[wall]?.css || '';
@@ -107,6 +124,7 @@ export function applyDisplay() {
 }
 
 /** Muestra de un fondo (para el menú). */
+export const accentSwatch = (k) => `<i class="wall-swatch" style="background:${ACCENTS[k].a || '#e11d48'}"></i>`;
 export const wallSwatch = (k) => `<i class="wall-swatch" style="background:${k === 'foto' ? 'var(--elev)' : WALLPAPERS[k].css || 'var(--dm-bg)'}"></i>`;
 
 /* ---------------- Editor de la foto (encuadre) ---------------- */

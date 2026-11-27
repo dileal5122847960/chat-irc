@@ -137,3 +137,33 @@ button.m-row:active, .m-row-open:active { background: var(--hover); }
 .me-photo .avatar { width: 32px; height: 32px; font-size: .7rem; }
 .m-sheet button .avatar { width: 28px; height: 28px; font-size: .65rem; }
 .m-sheet .profile-card .avatar { width: 112px; height: 112px; font-size: 2rem; }
+/* ---------- Dos columnas (Windows, tabletas): lista + conversación ---------- */
+.m-chat-empty { display: none; }
+@media (min-width: 880px) {
+  .mapp { flex-direction: row; }
+  .m-home { flex: 0 0 380px; max-width: 420px; border-right: 1px solid var(--border); }
+  .m-home.hidden { display: flex !important; }
+  .m-chat.hidden { display: flex !important; }
+  .m-chat.hidden > .chat { display: none; }
+  .m-chat.hidden .m-chat-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 30px; background: var(--dm-bg); color: var(--muted); }
+  .m-chat-empty b { color: var(--text); font-size: 1.1rem; }
+  .m-chat-empty small { max-width: 340px; }
+  #back-btn { display: none; }
+  .m-row.active { background: var(--active); }
+  .menu-pop.m-sheet { left: auto; right: 16px; bottom: 16px; width: 380px; border-radius: 16px; }
+}
+/* ---------- Bienvenida ---------- */
+.onboard { position: fixed; inset: 0; z-index: 130; background: var(--bg); display: grid; place-items: center; padding: 24px; }
+.onboard-card { max-width: 380px; text-align: center; display: grid; gap: 14px; justify-items: center; animation: m-pop .3s ease-out; }
+.onboard-ico { font-size: 4rem; }
+.onboard h2 { margin: 0; font-size: 1.5rem; }
+.onboard p { margin: 0; color: var(--muted); line-height: 1.5; }
+.onboard-dots { display: flex; gap: 6px; }
+.onboard-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.onboard-dots i.on { background: var(--accent); width: 20px; border-radius: 4px; }
+/* ---------- Bloqueo con PIN ---------- */
+.pin-lock { position: fixed; inset: 0; z-index: 140; background: radial-gradient(120% 60% at 50% 0%, rgba(225, 29, 72, .3), transparent 60%), var(--bg); display: grid; place-items: center; padding: 24px; }
+.pin-card { width: 100%; max-width: 320px; display: grid; gap: 12px; justify-items: center; text-align: center; }
+.pin-card h2 { margin: 6px 0; font-size: 1.3rem; }
+.pin-card form { width: 100%; display: grid; gap: 10px; }
+.pin-card input { text-align: center; font-size: 1.6rem; letter-spacing: .4em; padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }

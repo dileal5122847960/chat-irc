@@ -179,6 +179,17 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   (`set_my_attitude`, `list_friends` y `my_account` la devuelven); también viaja en el mensaje `profile` (al instante).
 - **Tonos** (`TONES`/`sounds`/`playTone` en `src/common.js`): tono de mensajes y de llamadas elegibles (generados con
   WebAudio, sin archivos). Con la app de Android cerrada suena el tono de notificación del sistema.
+- **Extras de privados** (`dm.js`, sección «Extras»): tocar burbuja → reacciones, responder citando, copiar, borrar (para mí /
+  para todos); «escribiendo…»; buscar; mensajes temporales (`ttl`, por chat, en localStorage `ttl:<clave>`); zumbido
+  (`buzz`); código de seguridad (huellas DTLS de la conexión). Controles por el buzón si el amigo no está (`sendCtl`).
+- **Herramientas del «+»** (`src/dmtools.js`): ta-te-ti, pizarra compartida, ubicación (actual y en vivo 15 min, mapa con
+  baldosas de OpenStreetMap). Compartir pantalla en llamadas (web/Windows; Electron con `setDisplayMediaRequestHandler`).
+  Transcripción de notas de voz con SpeechRecognition (solo navegador Chrome; `noTranscribe` en las apps).
+- **QR** (`src/qr.js`): «Mi código QR» con el enlace `https://chat-irc.vercel.app/#amigo=<número>` (la web lo detecta y
+  ofrece agregar) y «Escanear QR» (BarcodeDetector o jsQR).
+- **Apariencia:** color de la app (`ACCENTS` en profile.js), dos columnas en la app con ancho ≥ 880 px, bienvenida de
+  3 pantallas (localStorage `onboarded`), stickers animados de ChamuFlac (`cf-*` en emoji.js), bloqueo con PIN en la app
+  (hash local `pin:<uid>`; se pide al abrir y tras 1 min en segundo plano). Huella dactilar: pendiente (plugin nativo).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).
