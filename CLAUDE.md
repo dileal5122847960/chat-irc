@@ -276,7 +276,26 @@ archivo esté en Releases). Subir `androidVersion` / `windowsVersion` en package
   dibuja). Juegos de grupo por `groups.send(..., { live: true, to })` (sin buzón ni push).
 - **Estado al cierre del 27-11:** publicado en main y compiladas Android/Windows 1.1.2; `app_versions` latest 1.1.2,
   min 1.1.0 (web/android/windows); **captcha Turnstile activado** en Supabase (Secret Key solo allí).
-- Pendiente: llamadas en grupos, huella dactilar, llamada a pantalla completa con el teléfono bloqueado.
+- **1.1.3 (27-11):** Generala en privados con los dos jugadores anotados (min 2); `<queries>` IMAGE/VIDEO_CAPTURE en el
+  AndroidManifest (sin eso, en Android 11+ Capacitor no encuentra la cámara y abre la galería).
+- **1.1.4 (27-11):** reenviar / compartir / guardar cualquier mensaje (barra al tocar o **mantener apretado/clic derecho**;
+  botones Reenviar·Compartir·Guardar en archivos; etiqueta «↪ Reenviado» `fwd`; selector `forwardDialog` con conversaciones,
+  grupos y amigos `ctx.friendList`; texto se guarda como .txt; `ctx.shareText`); **ícono de cámara** `#cam-btn` en privados
+  (cameraDialog en todas las plataformas); **exportar a PDF en la app** (`src/pdfexport.js`: html2canvas + jsPDF en el
+  dispositivo, páginas A4 sin cortar burbujas, tema claro temporal; menú ⋮ → Guardar/Compartir). La web sigue con impresión.
+
+## Estado al cierre del 27-11-2026 (para retomar)
+
+- **Publicado en main:** web 1.1.0 + apps **Android/Windows 1.1.4** (el dueño compila con Actions y actualiza `app_versions`;
+  latest 1.1.4, min 1.1.0). Migraciones 0001–0016 aplicadas. Función `push` redesplegada. **Captcha Turnstile activo.**
+- Rama de trabajo: `compartir-unavez` (igual a main + estas notas).
+- **Pruebas automáticas:** con el captcha activo, las cuentas de prueba ya **no pueden iniciar sesión** desde este entorno
+  (no llega a challenges.cloudflare.com). Probar con **invitados de la web** (privados `via 'tab'`: mismo dm.js) o pedir al
+  dueño que pruebe; para pruebas con cuenta haría falta una sesión ya iniciada (storageState) o desactivar el captcha un rato.
+- **Pendiente que pidió el dueño / ideas:** llamadas en grupos de amigos; desbloqueo con huella (plugin nativo); llamada a
+  pantalla completa con el teléfono bloqueado (ConnectionService); fotos/archivos en grupos (hoy solo texto/stickers/juegos).
+- **Para que el dueño confirme en dispositivos reales:** cámara del teléfono (1.1.3+), Guardar/Compartir en Android,
+  PDF en Android (Documentos/ChamuFlac), avisos push de grupos y del navegador, Momentos con foto entre teléfonos.
 
 ## Ideas propuestas (no hechas)
 
