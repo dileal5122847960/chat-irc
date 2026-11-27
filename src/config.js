@@ -20,3 +20,5 @@ export const FIREBASE_WEB = {
 };
 // Clave pública VAPID ("Certificados push web" de Firebase Cloud Messaging). También es pública.
 export const VAPID_KEY = 'BBNPMakQNns1vGkEkJQ_OK4nePozSHhKtsF9eKF7BQGOcFFQx8NmPmxPCE1rdk_F-Y8Y4meS3-u5EY0AzfCjNPo';
+// Cloudflare Turnstile (captcha contra bots): clave pública del sitio. La secreta solo va en Supabase.
+export const TURNSTILE_SITE_KEY = '0x4AAAAAAGV4fVzcw_DhdkXH';

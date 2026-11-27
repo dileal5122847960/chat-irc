@@ -11,6 +11,7 @@ import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
 import { createGroups } from './groups.js';
+import { captchaToken } from './captcha.js';
 import { webPushState, webPushToken, webPushOff, onWebPushTap } from './webpush.js';
 import { mountAds } from './ads.js';
 import { createPolls } from './polls.js';
@@ -353,8 +354,9 @@ async function submitHome(form) {
     }
     // Iniciar sesión con correo
     if (homeView === 'login') {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: form.email.value.trim(), password: form.password.value });
-      if (error) return fail(error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message === 'Email not confirmed' ? 'Aún no confirmaste tu correo. Revisa tu bandeja de entrada.' : esc(error.message));
+      const captcha = await captchaToken(form, { lang: getLang() });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: form.email.value.trim(), password: form.password.value, options: { captchaToken: captcha || undefined } });
+      if (error) return fail(/captcha/i.test(error.message) ? 'No pudimos comprobar que no eres un robot. Inténtalo de nuevo.' : error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message === 'Email not confirmed' ? 'Aún no confirmaste tu correo. Revisa tu bandeja de entrada.' : esc(error.message));
       await loadAccount(data.user);
       return renderHome();
     }
@@ -363,11 +365,12 @@ async function submitHome(form) {
       const nick = form.nick.value.trim();
       const problem = await nickProblem(nick);
       if (problem) return fail(esc(problem));
+      const captcha = await captchaToken(form, { lang: getLang() });
       const { data, error } = await supabase.auth.signUp({
         email: form.email.value.trim(), password: form.password.value,
-        options: { data: { nick, first_name: names.first, last_name: names.last }, emailRedirectTo: location.origin + '/' },
+        options: { data: { nick, first_name: names.first, last_name: names.last }, emailRedirectTo: location.origin + '/', captchaToken: captcha || undefined },
       });
-      if (error) return fail(/already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : esc(error.message));
+      if (error) return fail(/captcha/i.test(error.message) ? 'No pudimos comprobar que no eres un robot. Inténtalo de nuevo.' : /already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : esc(error.message));
       store.set('lastNick', nick);
       if (data.session) {
         await loadAccount(data.user);

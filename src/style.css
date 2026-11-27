@@ -983,3 +983,5 @@ button.once:hover { border-color: var(--dm-accent); }
 .dm-status.grp-members { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .dm-status.grp-members svg { flex: none; }
 .chan.dm .avatar.grp svg { width: 70%; height: 70%; stroke-width: 2.4; }
+.captcha-box { display: flex; justify-content: center; margin: 6px 0; }
+.captcha-box:empty { margin: 0; }

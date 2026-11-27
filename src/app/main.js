@@ -17,6 +17,7 @@ import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
 import { createGroups } from '../groups.js';
+import { captchaToken } from '../captcha.js';
 import { mountAds } from '../ads.js';
 import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from '../profile.js';
@@ -208,17 +209,18 @@ async function submitAuth(form, mode) {
     }
     if (mode === 'login') {
       store.set('lastEmail', f.email.trim());
-      const { data, error } = await supabase.auth.signInWithPassword({ email: f.email.trim(), password: f.password });
-      if (error) return fail(esc(t(error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message)));
+      const captcha = await captchaToken(form, { lang: getLang() });
+      const { data, error } = await supabase.auth.signInWithPassword({ email: f.email.trim(), password: f.password, options: { captchaToken: captcha || undefined } });
+      if (error) return fail(esc(t(/captcha/i.test(error.message) ? 'No pudimos comprobar que no eres un robot. Inténtalo de nuevo.' : error.message === 'Invalid login credentials' ? 'Correo o contraseña incorrectos.' : error.message)));
       return afterLogin(data.user);
     }
     if (mode === 'register') {
       store.set('lastEmail', f.email.trim());
       const { data, error } = await supabase.auth.signUp({
         email: f.email.trim(), password: f.password,
-        options: { data: { nick: f.nick.trim(), first_name: names.first, last_name: names.last } },
+        options: { data: { nick: f.nick.trim(), first_name: names.first, last_name: names.last }, captchaToken: (await captchaToken(form, { lang: getLang() })) || undefined },
       });
-      if (error) return fail(esc(t(/already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : error.message)));
+      if (error) return fail(esc(t(/captcha/i.test(error.message) ? 'No pudimos comprobar que no eres un robot. Inténtalo de nuevo.' : /already registered|already exists/i.test(error.message) ? 'Ese correo ya tiene una cuenta. Inicia sesión.' : error.message)));
       if (!data.session) return renderAuth('login', esc(t('Cuenta creada. Ya puedes ingresar.')), 'ok');
       return afterLogin(data.user);
     }
