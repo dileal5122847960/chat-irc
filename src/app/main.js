@@ -316,7 +316,7 @@ function enterApp() {
     avatar: (p) => (p.me ? photos.avatar('me', p.nick) : photos.avatar('u:' + p.number, p.nick)),
     menu: (anchor, items) => openMenu(anchor, items.map((it) => (it === '-' ? it : { ...it, run: it.act }))),
     confirm: (text) => openDialog({ title: text, confirm: t('Borrar'), danger: true }),
-    info: async (title, html) => { await openDialog({ title, text: html, confirm: t('Cerrar') }); },
+    info: async (title, html) => { const d = openDialog({ title, text: html, confirm: t('Cerrar') }); document.querySelector('.dialog [data-cancel]')?.remove(); await d; },
     onChange: () => renderLists(),
   });
   dm.init();
@@ -646,12 +646,12 @@ addEventListener('resize', () => renderLists());
 function chatsHtml(chats) {
   const newGroup = `<button class="m-new-group" data-new-group>${icon('users')}<span>${esc(t('Nuevo grupo'))}</span></button>`;
   if (!chats.length) {
-    return moments.stripHtml() + newGroup + `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
+    return (moments?.stripHtml() || '') + newGroup + `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
       <p class="muted">Toca a un amigo para hablar. Las conversaciones no se guardan en ningún servidor.</p>
       <button class="btn small" data-goto="friends">Ver amigos</button></div>`;
   }
   // Lo más reciente arriba
-  return moments.stripHtml() + newGroup + [...chats].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).map((w) => {
+  return (moments?.stripHtml() || '') + newGroup + [...chats].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).map((w) => {
     const last = [...w.msgs.values()].pop();
     const sub = last ? (last.mine ? '✓ ' : w.group && last.nick ? last.nick + ': ' : '') + previewText(last) : dm.statusText(w);
     const av = w.group ? `<span class="avatar grp">${icon('users')}</span>` : `${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<i class="dm-dot ${w.status}"></i>`;

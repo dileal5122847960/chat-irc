@@ -1021,7 +1021,7 @@ button.once:hover { border-color: var(--dm-accent); }
 .mo-stage.paused .mo-bars i.now b { animation-play-state: paused; }
 @keyframes mo-fill { to { width: 100%; } }
 .mo-top { display: flex; align-items: center; gap: 10px; padding: 10px 12px; position: relative; z-index: 3; }
-.mo-top > span { flex: 1; display: flex; flex-direction: column; line-height: 1.2; }
+.mo-top > span:not(.avatar) { flex: 1; display: flex; flex-direction: column; line-height: 1.2; }
 .mo-top small { opacity: .8; font-size: .75rem; }
 .mo-top .icon-btn { color: #fff; }
 .mo-body { flex: 1; display: grid; place-items: center; position: relative; min-height: 0; }
@@ -1043,3 +1043,5 @@ button.once:hover { border-color: var(--dm-accent); }
 .mo-bgs { display: flex; gap: 6px; }
 .mo-bgs button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
 .mo-bgs button.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--panel, #fff) inset; }
+.mo-viewer ~ .dialog-wrap, .mo-viewer ~ .menu-pop, .mo-viewer ~ .sheet-scrim { z-index: 320; }
+.mo-top .avatar { width: 38px; height: 38px; flex: none; }

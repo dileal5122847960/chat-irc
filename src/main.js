@@ -1748,7 +1748,7 @@ const moments = createMoments({
   avatar: (p) => (p.me ? photos.avatar('me', p.nick) : photos.avatar('u:' + p.number, p.nick)),
   menu: (anchor, items) => openMenu(anchor, items.map((it) => (it === '-' ? it : { ...it, onClick: it.act }))),
   confirm: (text) => openDialog({ title: text, confirm: t('Borrar'), danger: true }),
-  info: async (title, html) => { await openDialog({ title, text: html, confirm: t('Cerrar') }); },
+  info: async (title, html) => { const d = openDialog({ title, text: html, confirm: t('Cerrar') }); document.querySelector('.dialog [data-cancel]')?.remove(); await d; },
   onChange: () => renderMoments(),
 });
 function renderMoments() {

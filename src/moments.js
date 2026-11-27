@@ -181,7 +181,7 @@ export function createMoments(ctx) {
         await ctx.info(t('Visto por'), data?.length ? data.map((v) => `<b class="ugc">${esc(v.nick)}</b> <small class="muted">${esc(ago(Date.parse(v.at)))}</small>`).join('<br>') : esc(t('Todavía nadie lo vio.')));
         paused = false; show();
       });
-      if (!p.mine && !m.seen) { m.seen = true; supabase.rpc('mark_moment_seen', { p_id: m.id }); }
+      if (!p.mine && !m.seen) { m.seen = true; supabase.rpc('mark_moment_seen', { p_id: m.id }).then(() => {}, () => {}); } // (sin .then no se envía)
       if (m.photo_path) {
         const url = await photoUrl(m).catch(() => null);
         const box = el.querySelector('.mo-photo');
