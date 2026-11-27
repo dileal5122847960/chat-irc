@@ -269,6 +269,13 @@ archivo esté en Releases). Subir `androidVersion` / `windowsVersion` en package
   por dispositivo (`moment_keys`); foto cifrada en Storage privado `moments/<número>/<id>.bin`; «Visto por»; la app del
   dueño borra los archivos caducados. Ojo: con el cliente de Supabase, una llamada `rpc()` sin `await`/`.then` no se envía.
 - Migraciones 0013–0016 aplicadas por el dueño el 27-11-2026. Función `push` redesplegada.
+- **1.1.1–1.1.2 (27-11-2026):** «Agregar amigo» sin el evento del clic; número solo dígitos; **cámara** en privados
+  (`src/camera.js`: nativa con `<input capture>` en Android, propia con getUserMedia en Windows/web); textos de «una vez»
+  (audio: escuchar/Escuchado); **juegos** (`src/games.js`): Cuatro en línea, Batalla naval (solo privados, sin anfitrión,
+  verificación con compromiso), Generala (semilla comprometida y revelada), Basta y Dibujá y adiviná (palabra solo en quien
+  dibuja). Juegos de grupo por `groups.send(..., { live: true, to })` (sin buzón ni push).
+- **Estado al cierre del 27-11:** publicado en main y compiladas Android/Windows 1.1.2; `app_versions` latest 1.1.2,
+  min 1.1.0 (web/android/windows); **captcha Turnstile activado** en Supabase (Secret Key solo allí).
 - Pendiente: llamadas en grupos, huella dactilar, llamada a pantalla completa con el teléfono bloqueado.
 
 ## Ideas propuestas (no hechas)
