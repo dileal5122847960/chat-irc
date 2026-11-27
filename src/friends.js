@@ -175,5 +175,7 @@ export function createFriends(ctx) {
   }
   const nickOf = (number) => friends.find((f) => String(f.user_number) === String(number))?.nick;
 
-  return { start, stop, open, refresh, notify, isFriend, nickOf, updateLocal, addDialog };
+  const accepted = () => friends.filter((f) => f.status === 'accepted').map((f) => ({ number: String(f.user_number), nick: f.nick }));
+
+  return { start, stop, open, refresh, notify, isFriend, nickOf, updateLocal, addDialog, accepted };
 }

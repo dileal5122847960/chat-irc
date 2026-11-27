@@ -85,6 +85,7 @@ export function createDM(ctx) {
       .on('broadcast', { event: 'cancel' }, ({ payload }) => payload && dismissRequest(payload.id))
       .on('broadcast', { event: 'mail' }, () => ctx.onMailPing?.()) // un amigo dejó mensajes en el buzón
       .on('broadcast', { event: 'receipt' }, ({ payload }) => payload && onReceipt(payload))
+      .on('broadcast', { event: 'group' }, () => ctx.onGroupPing?.()) // me agregaron o quitaron de un grupo
       .subscribe((status, err) => onStatus?.(ch, status, err));
     return ch;
   }
@@ -271,6 +272,7 @@ export function createDM(ctx) {
     ctx.renderChanList();
   }
   function statusText(w) {
+    if (w.group) return t('{n} personas', { n: w.group.members.length });
     return {
       pending: w.via === 'user' ? 'Conectando…' : 'Esperando respuesta…', connecting: 'Conectando…',
       offline: canMail(w) ? 'sin conexión · tus mensajes le llegarán al conectarse' : 'sin conexión', open: w.relay ? 'en línea · vía servidor (sin cifrado de extremo a extremo)' : 'en línea · cifrado de extremo a extremo',
@@ -279,6 +281,7 @@ export function createDM(ctx) {
     }[w.status] || '';
   }
   function renderHeader(w) {
+    if (w.group) return renderGroupHeader(w);
     document.getElementById('win-name').innerHTML = `${peerAvatar(w)}<span class="dm-title-nick" style="${nickStyle(w.peer.nick)}">${esc(w.peer.nick)}</span>${w.peer.reg ? verified : ''}`;
     document.getElementById('topic').innerHTML = `<span class="dm-status ${w.status} ${w.relay ? 'relay' : ''}">${w.status === 'open' ? icon(w.relay ? 'unlock' : 'lock') : ''}${esc(statusText(w))}</span>`;
     const open = w.status === 'open' && !w.relay; // las llamadas necesitan conexión directa
@@ -286,6 +289,7 @@ export function createDM(ctx) {
     document.getElementById('call-video').disabled = !open || !!w.call;
   }
   function syncComposer(w) {
+    if (w.group) return syncGroupComposer(w);
     const open = w.status === 'open';
     const writable = open || canMail(w);
     const input = document.getElementById('input');
@@ -464,6 +468,7 @@ export function createDM(ctx) {
     };
   }
   const sendJSON = (w, obj) => {
+    if (w.group) return;
     if (w.dc?.readyState === 'open') return w.dc.send(JSON.stringify(obj));
     if (w.relay) return w.rt?.send({ type: 'broadcast', event: 'relay', payload: { ...obj, ...route(w) } });
   };
@@ -628,6 +633,7 @@ export function createDM(ctx) {
   function markRead(w) {
     if (!w.unreadMids.length || state.active !== w.key || document.hidden) return;
     const mids = w.unreadMids.splice(0);
+    if (w.group) return ctx.groups?.receipt(w.group.id, 'read', mids);
     if (isLinked(w)) sendJSON(w, { t: 'read', mids });
     else if (w.via === 'user') sendTo('user', w.peer.cid, 'receipt', { from: w.self, t: 'read', mids });
   }
@@ -664,6 +670,7 @@ export function createDM(ctx) {
   }
   /** Mensajes de control: por la conexión si la hay; si no, entre amigos, cifrados por el buzón. */
   function sendCtl(w, obj) {
+    if (w.group) return ctx.groups?.send(w.group.id, obj);
     if (w.dc?.readyState === 'open' || (w.relay && w.rt)) return sendJSON(w, obj);
     if (canMail(w)) ctx.mailbox.send(w.peer.cid, { ...obj, nick: state.nick, ts: Date.now() });
   }
@@ -757,7 +764,7 @@ export function createDM(ctx) {
   function setReply(w, mid) {
     const m = w.msgs.get(mid);
     if (!m) return;
-    w.replyTo = { mid, nick: m.mine ? state.nick : w.peer.nick, text: previewOf(m) };
+    w.replyTo = { mid, nick: m.mine ? state.nick : m.nick || w.peer.nick, text: previewOf(m) };
     renderReplyBar(w);
     document.getElementById('input')?.focus();
   }
@@ -780,7 +787,7 @@ export function createDM(ctx) {
     if (w?.kind !== 'dm' || w.status !== 'open' || !e.target.value) return;
     if (Date.now() - (w.typingSent || 0) < 2500) return;
     w.typingSent = Date.now();
-    sendJSON(w, { t: 'typing' });
+    if (w.group) ctx.groups?.typing(w.group.id); else sendJSON(w, { t: 'typing' });
   });
 
   /* --- Mensajes temporales --- */
@@ -805,6 +812,7 @@ export function createDM(ctx) {
 
   /* --- Zumbido --- */
   function sendBuzz(w) {
+    if (w.group) return;
     if (!(w.dc?.readyState === 'open' || w.relay)) return toast(t('El zumbido solo se puede enviar cuando están conectados.'));
     if (Date.now() - (w.buzzSent || 0) < 8000) return toast(t('Espera unos segundos para enviar otro zumbido.'));
     w.buzzSent = Date.now();
@@ -905,8 +913,9 @@ export function createDM(ctx) {
   function addMessage(w, m) {
     m.mid ||= crypto.randomUUID();
     if (m.mine) m.tick = 'sent';
-    m.first = !w.lastBubble || w.lastBubble.mine !== m.mine || m.ts - w.lastBubble.ts > 5 * 60 * 1000;
-    w.lastBubble = { mine: m.mine, ts: m.ts };
+    m.first = !w.lastBubble || w.lastBubble.mine !== m.mine || w.lastBubble.from !== m.from || m.ts - w.lastBubble.ts > 5 * 60 * 1000;
+    w.lastBubble = { mine: m.mine, ts: m.ts, from: m.from };
+    w.lastTs = m.ts;
     w.msgs.set(m.mid, m);
     w.last = null;
     ctx.addHtml(w.key, bubbleHtml(w, m), { count: !m.mine });
@@ -919,14 +928,16 @@ export function createDM(ctx) {
       return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} deleted" id="m-${m.mid}"><div class="bubble"><div class="btext"><i>🚫 ${esc(t(m.mine ? 'Borraste este mensaje' : 'Se borró este mensaje'))}</i><span class="meta-spacer"></span></div>${meta}</div></div>`;
     }
     const quote = m.reply ? `<div class="bquote" data-goto="${esc(m.reply.mid)}"><b class="ugc">${esc(m.reply.nick)}</b><span class="ugc">${esc(m.reply.text)}</span></div>` : '';
-    const reacts = m.reactions && (m.reactions.me || m.reactions.peer)
-      ? `<div class="breacts">${[...new Set([m.reactions.me, m.reactions.peer].filter(Boolean))].map((e) => `<span>${esc(e)}${m.reactions.me === e && m.reactions.peer === e ? '<small>2</small>' : ''}</span>`).join('')}</div>` : '';
+    const rv = m.reactions ? Object.values(m.reactions).filter(Boolean) : [];
+    const rc = rv.reduce((a, e) => ((a[e] = (a[e] || 0) + 1), a), {});
+    const reacts = rv.length ? `<div class="breacts">${Object.entries(rc).map(([e, n]) => `<span>${esc(e)}${n > 1 ? `<small>${n}</small>` : ''}</span>`).join('')}</div>` : '';
+    const who = w.group && !m.mine && m.first ? `<b class="bnick ugc" style="${nickStyle(m.nick || '')}">${esc(m.nick || '')}</b>` : '';
     if (m.kind === 'text') {
       const onlyEmoji = /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,12}$/u.test(m.text) && !/^[\d#*\s]+$/.test(m.text) && [...new Intl.Segmenter().segment(m.text.trim())].length <= 3;
       if (onlyEmoji) { cls = 'emoji-only'; body = `<div class="big-emoji">${esc(m.text)}</div>`; }
       else body = `<div class="btext">${trBody(m)}<span class="meta-spacer"></span></div>`;
     } else if (m.kind === 'action') {
-      body = `<div class="btext"><i>* <span class="ugc">${esc(m.mine ? state.nick : w.peer.nick)}</span> ${trBody(m)}</i><span class="meta-spacer"></span></div>`;
+      body = `<div class="btext"><i>* <span class="ugc">${esc(m.mine ? state.nick : m.nick || w.peer.nick)}</span> ${trBody(m)}</i><span class="meta-spacer"></span></div>`;
     } else if (m.kind === 'tool') {
       cls = 'tool-msg'; body = tools.bubble(w, m);
     } else if (m.kind === 'sticker') {
@@ -937,7 +948,7 @@ export function createDM(ctx) {
       if (f.voice || f.kind === 'audio') cls = 'voice-msg';
       body = fileHtml(w, m, f);
     }
-    return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls} ${reacts ? 'has-reacts' : ''}" id="m-${m.mid}"><div class="bubble">${quote}${body}${meta}${reacts}</div></div>`;
+    return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls} ${reacts ? 'has-reacts' : ''}" id="m-${m.mid}"><div class="bubble">${who}${quote}${body}${meta}${reacts}</div></div>`;
   }
   /**
    * Cuerpo de texto. Siempre se muestra el original; si llegó en otro idioma distinto del
@@ -1133,6 +1144,7 @@ export function createDM(ctx) {
     const x = extras(w);
     const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: detectLang(text) || getLang(), ...x }; // idioma real del texto
     const local = { mid, mine: true, kind: data.kind, text, ts: Date.now(), ...localExtras(x) };
+    if (w.group) return sendGroup(w, data, local);
     if (w.status !== 'open') return canMail(w) && sendViaMail(w, data, local);
     sendJSON(w, data);
     addMessage(w, local);
@@ -1142,6 +1154,7 @@ export function createDM(ctx) {
     const mid = crypto.randomUUID();
     const x = extras(w);
     const local = { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now(), ...localExtras(x) };
+    if (w.group) return sendGroup(w, { t: 'sticker', mid, id, ...x }, local);
     if (w.status !== 'open') return canMail(w) && sendViaMail(w, { t: 'sticker', mid, id, ...x }, local);
     sendJSON(w, { t: 'sticker', mid, id, ...x });
     addMessage(w, local);
@@ -1196,7 +1209,7 @@ export function createDM(ctx) {
     }
   }
   function sendFile(w, file, extra = {}) {
-    if (w.status !== 'open') return;
+    if (w.status !== 'open' || w.group) return;
     if (file.size > MAX_FILE) return toast(`"${file.name}" supera el límite de 100 MB.`);
     if (w.relay && file.size > MAX_FILE_RELAY) return toast(t('Sin conexión directa, el límite por archivo es de 5 MB.'));
     if (!file.size) return;
@@ -1240,7 +1253,7 @@ export function createDM(ctx) {
   /* ---------------- Notas de voz (con forma de onda) ---------------- */
   let rec = null;
   async function startVoice(w) {
-    if (rec || w.status !== 'open') return;
+    if (rec || w.status !== 'open' || w.group) return;
     if (!window.MediaRecorder) return toast('Tu navegador no permite grabar audio.');
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); } catch { return toast('Permite el acceso al micrófono para grabar notas de voz.'); }
@@ -1369,6 +1382,7 @@ export function createDM(ctx) {
     }
   }
   async function startCall(w, video) {
+    if (w.group) return;
     if (w.relay) return toast(t('Las llamadas necesitan conexión directa, que sus redes no permiten ahora mismo.'));
     if (w.status !== 'open' || w.call) return;
     if (document.querySelector('.call-overlay')) return toast('Ya estás en una llamada.');
@@ -1629,6 +1643,122 @@ export function createDM(ctx) {
   };
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
+
+  /* ================= Grupos de amigos =================
+   * El transporte (cifrado por dispositivo, canal privado group:<id>, buzón) está en groups.js;
+   * aquí solo la ventana: burbujas con el nick de quien escribe, reacciones de varios y
+   * marcas «entregado» / «leído» cuando les llegó / lo leyeron todos. */
+  const gkey = (id) => 'g:' + id;
+  const groupAvatar = (g) => `<span class="avatar grp">${icon('users')}</span>`;
+  function groupWindow(g) {
+    let w = state.windows.get(gkey(g.id));
+    if (w) {
+      w.group = g;
+      if (w.name !== g.name) { w.name = w.peer.nick = g.name; }
+      if (state.active === w.key) { renderHeader(w); syncComposer(w); }
+      ctx.renderChanList();
+      return w;
+    }
+    w = {
+      key: gkey(g.id), kind: 'dm', group: g, name: g.name, peer: { cid: gkey(g.id), nick: g.name, reg: true }, id: g.id,
+      via: 'group', self: String(myNumber() ?? ''), status: 'open', role: 'caller',
+      lines: [], unread: 0, mention: false, last: null, incoming: new Map(), call: null, ttl: 0,
+      msgs: new Map(), unreadMids: [], lastBubble: null, lastTs: 0,
+    };
+    const prev = carry.get(w.key);
+    if (prev) { carry.delete(w.key); w.lines = prev.lines; w.msgs = prev.msgs; w.unreadMids = prev.unreadMids || []; w.unread = prev.unread || 0; }
+    state.windows.set(w.key, w);
+    ctx.renderChanList();
+    return w;
+  }
+  /** Ya no estoy en el grupo (me quitaron o salí): la ventana se cierra. */
+  function dropGroup(id) {
+    const w = state.windows.get(gkey(id));
+    if (!w) return;
+    state.windows.delete(w.key);
+    if (state.active === w.key) ctx.activate('status');
+    ctx.renderChanList();
+  }
+  const memberNick = (g, n) => g.members.find((x) => String(x.number) === String(n))?.nick;
+  function renderGroupHeader(w) {
+    const g = w.group;
+    document.getElementById('win-name').innerHTML = `${groupAvatar(g)}<span class="dm-title-nick ugc">${esc(g.name)}</span>`;
+    const typing = w.typing && w.typing.until > Date.now() ? w.typing.nick : '';
+    const names = g.members.filter((x) => String(x.number) !== String(myNumber())).map((x) => x.nick);
+    document.getElementById('topic').innerHTML = typing
+      ? `<span class="dm-status open"><span class="ugc">${esc(typing)}</span> ${esc(t('está escribiendo…'))}</span>`
+      : `<span class="dm-status open grp-members">${icon('lock')}<span class="ugc">${esc([t('Tú'), ...names].join(', '))}</span></span>`;
+    document.getElementById('call-audio').disabled = true;
+    document.getElementById('call-video').disabled = true;
+  }
+  function syncGroupComposer(w) {
+    const input = document.getElementById('input');
+    input.disabled = false;
+    input.placeholder = t('Mensaje en {grupo}', { grupo: w.group.name });
+    for (const id of ['attach-btn', 'mic-btn', 'tools-btn', 'once-btn']) { const b = document.getElementById(id); if (b) { b.disabled = true; b.classList.remove('on'); } }
+    document.getElementById('emoji-btn').disabled = false;
+  }
+  async function sendGroup(w, data, local) {
+    addMessage(w, { ...local, from: String(myNumber()) });
+    setTickRaw(w, local.mid, 'queued');
+    const ok = await ctx.groups?.send(w.group.id, { ...data, ts: local.ts });
+    setTickRaw(w, local.mid, ok ? 'sent' : 'failed');
+    if (!ok) toast(t('No se pudo enviar el mensaje. Inténtalo de nuevo.'));
+  }
+  /** Mensaje (ya descifrado) de un miembro. from: su número (puede ser yo desde otro dispositivo). */
+  function groupReceive(g, from, m, at) {
+    from = String(from);
+    const w = groupWindow(g);
+    const mine = from === String(myNumber());
+    const nick = mine ? state.nick : String(memberNick(g, from) || m.nick || from).slice(0, 20);
+    const mid = safeId(m.mid);
+    if (m.t === 'react') {
+      const msg = w.msgs.get(mid);
+      if (!msg || msg.deleted) return;
+      msg.reactions = { ...(msg.reactions || {}), [mine ? 'me' : 'n' + from]: REACTIONS.includes(m.emoji) ? m.emoji : null };
+      return rerender(w, mid);
+    }
+    if (m.t === 'del') { const msg = w.msgs.get(mid); if (msg && (msg.from === from || (mine && msg.mine))) markDeleted(w, msg); return; }
+    if (w.msgs.has(mid)) return;
+    const ts = Math.min(Number(m.ts) || Date.parse(at) || Date.now(), Date.now());
+    let msg;
+    if (m.t === 'text') {
+      msg = { mid, mine, from, nick, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts, lang: LANGS[m.lang] ? m.lang : null, ...inExtras(m, ts) };
+      if (!mine && msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'offer';
+    } else if (m.t === 'sticker' && STICKERS.includes(m.id)) {
+      msg = { mid, mine, from, nick, kind: 'sticker', sticker: m.id, ts, ...inExtras(m, ts) };
+    } else return;
+    if (w.typing?.from === from) w.typing = null;
+    addMessage(w, msg);
+    if (mine) return;
+    ctx.groups?.receipt(g.id, 'ack', [mid]);
+    w.unreadMids.push(mid);
+    markRead(w);
+  }
+  /** Acuses de los demás: entregado / leído cuando les llegó / lo leyeron todos. */
+  function groupReceipt(g, from, kind, mids) {
+    const w = state.windows.get(gkey(g.id));
+    if (!w || !Array.isArray(mids)) return;
+    const others = g.members.filter((x) => String(x.number) !== String(myNumber())).length;
+    for (const mid of mids.slice(0, 200)) {
+      const m = w.msgs.get(String(mid));
+      if (!m?.mine) continue;
+      (m.ackBy ||= new Set()).add(String(from));
+      if (kind === 'read') (m.readBy ||= new Set()).add(String(from));
+      if (others && (m.readBy?.size || 0) >= others) setTick(w, m.mid, 'read');
+      else if (others && m.ackBy.size >= others) setTick(w, m.mid, 'delivered');
+    }
+  }
+  function groupTyping(g, from) {
+    const w = state.windows.get(gkey(g.id));
+    if (!w || String(from) === String(myNumber())) return;
+    w.typing = { from: String(from), nick: memberNick(g, from) || '', until: Date.now() + 4000 };
+    if (state.active === w.key) renderHeader(w);
+    clearTimeout(w.typingTimer);
+    w.typingTimer = setTimeout(() => { if (state.active === w.key) renderHeader(w); }, 4100);
+  }
+  function groupSys(g, html) { const w = state.windows.get(gkey(g.id)); if (w) ctx.sys(w.key, html); }
+
   const tools = createTools({ state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast, sendBuzz, schedule });
   return {
     openTools: (w, anchor) => tools.openMenu(w, anchor),
@@ -1637,5 +1767,6 @@ export function createDM(ctx) {
     setReply, openSearch, setTtl, ttlOf: (w) => w.ttl || 0, ttlLabel, sendBuzz, securityCode, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
+    groupWindow, dropGroup, groupReceive, groupReceipt, groupTyping, groupSys,
   };
 }

@@ -962,3 +962,20 @@ button.once:hover { border-color: var(--dm-accent); }
 .poll-bar { position: absolute; inset: 0 auto 0 0; background: var(--active); transition: width .3s; }
 .poll-txt, .poll-pct { position: relative; }
 .poll-pct { color: var(--muted); font-size: .85rem; }
+
+/* ---------- Grupos de amigos ---------- */
+.avatar.grp { background: var(--brand-grad, linear-gradient(135deg, #fb7185, #be123c)); color: #fff; }
+.avatar.grp svg { width: 58%; height: 58%; }
+.bubble .bnick { display: block; font-size: .78rem; font-weight: 700; margin: 0 0 2px; }
+.sticker-msg .bubble .bnick, .emoji-only .bubble .bnick { margin-left: 4px; }
+.grp-members .ugc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.grp-list { max-height: 46vh; overflow-y: auto; margin: 4px -6px 0; }
+.grp-pick { display: flex !important; align-items: center; gap: 10px; margin: 0 !important; padding: 8px 6px; border-radius: 10px; cursor: pointer; font-weight: 500 !important; }
+.grp-pick:hover { background: var(--hover, rgba(127, 127, 127, .1)); }
+.grp-pick span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.grp-pick input { width: 20px; height: 20px; accent-color: var(--accent); }
+.grp-pick .avatar { width: 34px; height: 34px; }
+.m-new-group, .side-new-group { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; padding: 10px 16px; cursor: pointer; text-align: left; }
+.m-new-group svg, .side-new-group svg { width: 20px; height: 20px; }
+.side-new-group { padding: 6px 10px; font-size: .88rem; border-radius: 8px; }
+.side-new-group:hover, .m-new-group:hover { background: var(--hover, rgba(127, 127, 127, .1)); }

@@ -112,5 +112,9 @@ export function createMailbox({ supabase, platform, version, deviceName }) {
     return fetching;
   }
 
-  return { register, send, fetch, deviceId: () => deviceId };
+  /** Para los grupos: cifrar un objeto para la clave pública de un dispositivo y descifrar lo mío. */
+  const seal = (publicKey, obj) => encryptFor(publicKey, JSON.stringify(obj));
+  const open = async (body) => { keys ||= uid ? await loadKeys() : null; if (!keys) throw new Error('sin clave'); return decrypt(body); };
+
+  return { register, send, fetch, seal, open, deviceId: () => deviceId };
 }

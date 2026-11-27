@@ -10,6 +10,7 @@ const beep = () => playTone('msg'); // tono de mensaje elegido
 import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
+import { createGroups } from './groups.js';
 import { mountAds } from './ads.js';
 import { createPolls } from './polls.js';
 import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from './profile.js';
@@ -500,7 +501,7 @@ function enterChat(nick, registered, channel) {
   state.registered = registered;
   photos.setOwner(registered ? state.account?.id : null);
   loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
-  if (registered && state.account?.id) mailbox.register(state.account.id).then(fetchMail); // dispositivo, versión y clave del buzón
+  if (registered && state.account?.id) mailbox.register(state.account.id).then(() => { groups.start(); fetchMail(); }); // dispositivo, versión y clave del buzón; luego, grupos
   renderClient();
   activate('status');
   loadChannels().then(() => {
@@ -611,6 +612,7 @@ function renderClient() {
     openPrivate(li.dataset.cid);
   };
   document.getElementById('dm-list').onclick = (e) => {
+    if (e.target.closest('[data-new-group]')) return groups.createDialog();
     const b = e.target.closest('[data-win]');
     if (!b) return;
     const w = state.windows.get(b.dataset.win);
@@ -848,12 +850,12 @@ function renderChanList() {
   nav.innerHTML = `<button class="chan ${state.active === 'status' ? 'active' : ''}">${icon('compass')}<span class="chan-name ui">Explorar canales</span></button>`;
   const joined = [...state.windows.values()].filter((w) => w.key !== 'status' && w.kind !== 'dm');
   const dms = [...state.windows.values()].filter((w) => w.kind === 'dm');
-  document.getElementById('dm-label').classList.toggle('hidden', !dms.length);
-  document.getElementById('dm-list').innerHTML = dms.map((w) => {
+  document.getElementById('dm-label').classList.toggle('hidden', !dms.length && !state.registered);
+  document.getElementById('dm-list').innerHTML = (state.registered ? `<button class="side-new-group" data-new-group>${icon('users')}<span>${esc(t('Nuevo grupo'))}</span></button>` : '') + dms.map((w) => {
     const badge = w.unread ? `<span class="badge mention">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
     return `<button data-win="${esc(w.key)}" class="chan dm ${w.key === state.active ? 'active' : ''} ${w.unread ? 'unread' : ''}" title="${esc(dm.statusText(w))}">
-      <span class="dm-dot ${w.status}"></span>${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<span class="chan-name">${esc(w.peer.nick)}</span>${w.call ? `<span class="role admin">${icon('phone')}</span>` : ''}${badge}
-      <span class="part" data-part title="Cerrar conversación">${icon('x')}</span></button>`;
+      ${w.group ? `<span class="avatar grp">${icon('users')}</span>` : `<span class="dm-dot ${w.status}"></span>${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}`}<span class="chan-name">${esc(w.peer.nick)}</span>${w.call ? `<span class="role admin">${icon('phone')}</span>` : ''}${badge}
+      ${w.group ? '' : `<span class="part" data-part title="Cerrar conversación">${icon('x')}</span>`}</button>`;
   }).join('');
   document.getElementById('chan-list').innerHTML = joined.map((w) => {
     const badge = w.unread ? `<span class="badge ${w.mention ? 'mention' : ''}">${w.unread > 99 ? '99+' : w.unread}</span>` : '';
@@ -1262,6 +1264,8 @@ async function webSecurity(w) {
 function channelMenu(anchor) {
   const w = state.windows.get(state.active);
   if (!w || w.key === 'status') return;
+  if (w.group) return openMenu(anchor, [...groups.menuItems(w).map((it) => (it === '-' ? it : { ...it, onClick: it.act })), '-',
+    { label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) }], { title: `<span><b class="ugc">${esc(w.name)}</b><small>${esc(dm.statusText(w))}</small></span>` });
   if (w.kind === 'dm') {
     const open = w.status === 'open';
     return openMenu(anchor, [
@@ -1463,6 +1467,7 @@ async function changeNickDialog() {
 async function quitChat() {
   closeOverlays();
   friends.stop();
+  groups.stop();
   dm.closeAll();
   for (const w of state.windows.values()) if (w.rt && w.kind !== 'dm') await supabase.removeChannel(w.rt);
   state.windows.clear();
@@ -1485,12 +1490,15 @@ const mailbox = createMailbox({
 async function fetchMail() {
   if (!state.registered || !state.nick) return;
   const items = await mailbox.fetch();
-  if (items.length) dm.receiveMail(items);
+  const forGroups = items.filter((it) => it.msg?.g);
+  const forDm = items.filter((it) => !it.msg?.g);
+  if (forDm.length) dm.receiveMail(forDm);
+  if (forGroups.length) await groups.receiveMail(forGroups);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchMail(); });
 
 /* ---------- Privados ---------- */
-const dm = createDM({
+const dmCtx = {
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
   photos, // foto de perfil (solo privados): viaja directamente entre las dos personas
   onOnceChange: (on) => {
@@ -1512,13 +1520,25 @@ const dm = createDM({
   mailbox,
   autoReconnect: true,
   onMailPing: () => fetchMail(),
+  onGroupPing: () => groups.load(), // me agregaron a un grupo (o me quitaron)
   onMailSent: (w) => friends.notify(w.peer.cid, 'msg', ''),
   nickOf: (number) => friends.nickOf(number),
   // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
   onRequestSent: (peer, w) => { if (w.via === 'user' && w.autoCall !== undefined) friends.notify(peer.cid, 'call', w.id, !!w.autoCall); },
   onBuzz: () => playTone('call', 'digital'),
   onBackgroundOpen: (w) => { beep(); toast(t('{nick} abrió una conversación privada contigo.', { nick: w.peer.nick })); },
+};
+const dm = createDM(dmCtx);
+/* ---------- Grupos de amigos (cuentas registradas) ---------- */
+const groups = createGroups({
+  supabase, mailbox, t, esc, icon, toast, openDialog, closeOverlays, SUPABASE_URL, SUPABASE_KEY,
+  dm: () => dm, myNumber: () => state.account?.number, myNick: () => state.nick,
+  friends: () => friends.accepted(),
+  avatar: (f) => photos.avatar('u:' + f.number, f.nick),
+  open: (key) => activate(key),
+  onChange: () => renderChanList(),
 });
+dmCtx.groups = groups;
 function openPrivate(cid) {
   const w = state.windows.get(state.active);
   const p = w?.people?.get(cid);

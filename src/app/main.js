@@ -16,6 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
+import { createGroups } from '../groups.js';
 import { mountAds } from '../ads.js';
 import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from '../profile.js';
@@ -272,6 +273,7 @@ async function afterLogin(user) {
 async function logout() {
   const id = Number(store.get('deviceId:' + state.account?.id)) || null;
   if (id) await supabase.from('devices').update({ push_token: null }).eq('id', id); // sin avisos en este teléfono
+  groups?.stop();
   dm?.closeAll();
   state.ready = false;
   state.account = null;
@@ -284,6 +286,7 @@ async function logout() {
 /* App: portada (chats y amigos) + conversación                          */
 /* ===================================================================== */
 let dm = null;
+let groups = null;
 function enterApp() {
   const a = state.account;
   state.clientId = String(a.number);
@@ -291,10 +294,20 @@ function enterApp() {
   photos.setOwner(a.id);
   loadIceServers(SUPABASE_URL, SUPABASE_KEY);
   renderShell();
-  dm = createDM(dmContext());
+  const dctx = dmContext();
+  dm = createDM(dctx);
+  groups = createGroups({
+    supabase, mailbox, t, esc, icon, toast, openDialog, closeOverlays, SUPABASE_URL, SUPABASE_KEY,
+    dm: () => dm, myNumber: () => state.clientId, myNick: () => state.nick,
+    friends: () => [...state.friends.values()].filter((f) => f.status === 'accepted').map((f) => ({ number: String(f.number), nick: f.nick })),
+    avatar: (f) => photos.avatar('u:' + f.number, f.nick),
+    open: (key) => activate(key),
+    onChange: () => renderLists(),
+  });
+  dctx.groups = groups;
   dm.init();
   state.ready = true;
-  mailbox.register(state.account.id).then(fetchMail); // dispositivo + clave del buzón; luego, mensajes pendientes
+  mailbox.register(state.account.id).then(() => { groups.start(); fetchMail(); }); // dispositivo + clave del buzón; luego, grupos y mensajes pendientes
   loadFriends().then(() => { for (const d of state.pendingTaps.splice(0)) handleTap(d); });
   initPush({ onToken: (token) => mailbox.register(state.account.id, token), onTap: handleTap });
   if (!store.get('onboarded')) showOnboarding();
@@ -336,6 +349,7 @@ function dmContext() {
     mailbox,
     autoReconnect: true,
     onMailPing: () => fetchMail(),
+    onGroupPing: () => groups?.load(), // me agregaron a un grupo (o me quitaron)
     onMailSent: (w) => sendPush(w.peer.cid, 'msg', ''),
     nickOf: (number) => state.friends.get(String(number))?.nick,
     // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
@@ -344,7 +358,7 @@ function dmContext() {
     onIncoming: (w, m) => {
       if (isForeground() && state.active === w.key) return;
       if (isForeground()) { playTone('msg'); try { navigator.vibrate?.(25); } catch { /* nada */ } }
-      else notify({ title: w.peer.nick, body: previewText(m), peer: w.peer.cid });
+      else notify({ title: w.group ? `${m.nick} · ${w.name}` : w.peer.nick, body: previewText(m), peer: w.peer.cid });
     },
     noTranscribe: isNative || isDesktop, // el reconocimiento de voz del navegador no está en las apps
     onBuzz: () => { playTone('call', 'digital'); if (isDesktop) window.chamuflacDesktop?.attention(); },
@@ -358,7 +372,10 @@ const mailbox = createMailbox({ supabase, platform, version: APP_VERSION, device
 async function fetchMail() {
   if (!state.ready) return;
   const items = await mailbox.fetch();
-  if (items.length) dm.receiveMail(items);
+  const forGroups = items.filter((it) => it.msg?.g);
+  const forDm = items.filter((it) => !it.msg?.g);
+  if (forDm.length) dm.receiveMail(forDm);
+  if (forGroups.length) await groups?.receiveMail(forGroups);
 }
 async function sendPush(to, kind, id, video = false) {
   if (!to) return;
@@ -375,7 +392,9 @@ async function sendPush(to, kind, id, video = false) {
 function handleTap(d) {
   if (!state.ready) return state.pendingTaps.push(d);
   if (d.kind === 'friend') { setTab('friends'); activate('status'); return loadFriends(); }
+  if (d.kind === 'group' && d.id) return Promise.all([groups?.load(), fetchMail()]).then(() => activate('g:' + d.id));
   const from = String(d.from || '');
+  if (from.startsWith('g:')) return activate(from); // aviso local de un grupo
   if (!from) return;
   if (d.kind === 'msg' || !d.id) return fetchMail().then(() => openChat(from)); // mensaje en el buzón
   const w = state.windows.get('dm:' + from);
@@ -611,16 +630,19 @@ function renderLists() {
 const wide = () => matchMedia('(min-width: 880px)').matches; // dos columnas: lista + conversación
 addEventListener('resize', () => renderLists());
 function chatsHtml(chats) {
+  const newGroup = `<button class="m-new-group" data-new-group>${icon('users')}<span>${esc(t('Nuevo grupo'))}</span></button>`;
   if (!chats.length) {
-    return `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
+    return newGroup + `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
       <p class="muted">Toca a un amigo para hablar. Las conversaciones no se guardan en ningún servidor.</p>
       <button class="btn small" data-goto="friends">Ver amigos</button></div>`;
   }
-  return chats.map((w) => {
+  // Lo más reciente arriba
+  return newGroup + [...chats].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).map((w) => {
     const last = [...w.msgs.values()].pop();
-    const sub = last ? (last.mine ? '✓ ' : '') + previewText(last) : dm.statusText(w);
-    return `<button class="m-row ${w.key === state.active ? 'active' : ''}" data-chat="${esc(w.peer.cid)}">
-      <span class="m-av">${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<i class="dm-dot ${w.status}"></i></span>
+    const sub = last ? (last.mine ? '✓ ' : w.group && last.nick ? last.nick + ': ' : '') + previewText(last) : dm.statusText(w);
+    const av = w.group ? `<span class="avatar grp">${icon('users')}</span>` : `${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<i class="dm-dot ${w.status}"></i>`;
+    return `<button class="m-row ${w.key === state.active ? 'active' : ''}" ${w.group ? `data-open="${esc(w.key)}"` : `data-chat="${esc(w.peer.cid)}"`}>
+      <span class="m-av">${av}</span>
       <span class="m-row-main"><b class="ugc">${esc(w.peer.nick)}</b><small class="${last ? 'ugc' : ''}">${esc(sub)}</small></span>
       ${w.call ? `<span class="m-row-ico">${icon('phone')}</span>` : ''}
       ${w.unread ? `<span class="badge mention">${w.unread > 99 ? '99+' : w.unread}</span>` : ''}
@@ -668,6 +690,8 @@ async function onListClick(e) {
   if (!b) return;
   const d = b.dataset;
   if (d.goto) return setTab(d.goto);
+  if (d.open) return activate(d.open);
+  if ('newGroup' in d) return groups.createDialog();
   if (d.chat) return openChat(d.chat);
   if (d.call || d.vcall) return openChat(d.call || d.vcall, !!d.vcall);
   if (d.fmenu) return friendMenu(b, d.fmenu);
@@ -770,6 +794,7 @@ function onResume() {
   if (!state.ready) return;
   loadFriends();
   fetchMail();
+  groups?.load();
   const w = state.windows.get(state.active);
   if (w) { w.unread = 0; clearNotifications(w.peer.cid); renderLists(); }
   if (Date.now() - lastVersionCheck > 10 * 60 * 1000) checkVersion().then((v) => {
@@ -895,6 +920,7 @@ function closeChatWith(number) { const w = state.windows.get('dm:' + number); if
 function chatMenu(anchor) {
   const w = state.windows.get(state.active);
   if (!w) return;
+  if (w.group) return openMenu(anchor, groups.menuItems(w).map((it) => (it === '-' ? it : { ...it, run: it.act })));
   openMenu(anchor, [
     ...(['closed', 'rejected', 'offline'].includes(w.status) ? [{ label: t('Volver a conectar'), icon: 'refresh', run: () => openChat(w.peer.cid) }] : []),
     { label: t('Buscar en la conversación'), icon: 'search', run: () => dm.openSearch() },

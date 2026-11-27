@@ -54,13 +54,14 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const to = Number(body.to);
-    const kind = ['call', 'friend', 'msg'].includes(body.kind) ? body.kind : 'dm';
+    const kind = ['call', 'friend', 'msg', 'group'].includes(body.kind) ? body.kind : 'dm';
     const id = String(body.id || (kind === 'friend' ? 'friend' : kind === 'msg' ? 'msg' : '')).replace(/[^\w-]/g, '').slice(0, 40);
+    const groupName = kind === 'group' ? String(body.group || '').slice(0, 60) : '';
     if (!(to >= 10000000 && to <= 99999999) || !id) return json({ error: 'bad_request' }, 400);
     if (!FCM_SERVICE_ACCOUNT) return json({ sent: 0, error: 'FCM no configurado' });
     if (!SERVICE_KEY) return json({ error: 'falta SUPABASE_SERVICE_ROLE_KEY' }, 500);
 
-    // Dispositivos del amigo (vacío si no sois amigos)
+    // Dispositivos del amigo (vacío si no son amigos)
     const tRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/push_targets`, {
       method: 'POST',
       headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' },
@@ -74,7 +75,8 @@ Deno.serve(async (req) => {
     const video = !!body.video;
     const title = nick;
     const text = kind === 'call' ? (video ? '📹 Videollamada entrante' : '📞 Llamada entrante')
-      : kind === 'friend' ? '👋 Te envió una solicitud de amistad' : kind === 'msg' ? '💬 Te envió un mensaje' : '💬 Quiere hablar contigo';
+      : kind === 'friend' ? '👋 Te envió una solicitud de amistad' : kind === 'msg' ? '💬 Te envió un mensaje'
+      : kind === 'group' ? `👥 Mensaje en ${groupName || 'un grupo'}` : '💬 Quiere hablar contigo';
     const data = { kind, id, from: String(targets[0].sender_number), nick, video: video ? '1' : '0', ts: String(Date.now()) };
 
     let sent = 0;
@@ -114,10 +116,10 @@ async function sendFcm(token: string, title: string, body: string, data: Record<
         data,
         android: {
           priority: 'HIGH',
-          ttl: kind === 'call' ? '45s' : kind === 'friend' || kind === 'msg' ? '86400s' : '120s', // si no llega a tiempo, ya no sirve
+          ttl: kind === 'call' ? '45s' : kind === 'friend' || kind === 'msg' || kind === 'group' ? '86400s' : '120s', // si no llega a tiempo, ya no sirve
           notification: {
             channel_id: kind === 'call' ? 'calls' : 'messages',
-            tag: 'from-' + data.from, // un aviso por persona (el nuevo reemplaza al anterior)
+            tag: kind === 'group' ? 'group-' + data.id : 'from-' + data.from, // un aviso por persona o grupo (el nuevo reemplaza al anterior)
             default_sound: true,
             notification_priority: kind === 'call' ? 'PRIORITY_MAX' : 'PRIORITY_HIGH',
             visibility: 'PRIVATE',
