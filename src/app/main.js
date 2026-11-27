@@ -20,6 +20,7 @@ import { createGroups } from '../groups.js';
 import { captchaToken } from '../captcha.js';
 import { createMoments } from '../moments.js';
 import { nativeCapture, cameraDialog } from '../camera.js';
+import { conversationPdf } from '../pdfexport.js';
 import { mountAds } from '../ads.js';
 import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from '../profile.js';
@@ -28,7 +29,7 @@ import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, loopTone, playTone, sounds, TONES } from '../common.js';
 import {
   isNative, isApp, isDesktop, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, installUpdate, initAppEvents,
-  deviceName, initPush, initLocal, notify, clearNotifications, isForeground, shareFile, saveFile, canShareFiles,
+  deviceName, initPush, initLocal, notify, clearNotifications, isForeground, shareFile, saveFile, canShareFiles, shareText,
 } from './native.js';
 
 export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
@@ -336,6 +337,8 @@ function dmContext() {
     photos, // foto de perfil: viaja directamente entre amigos
     // Compartir (correo, otras apps) y guardar archivos del chat
     canShareFiles, shareFile,
+    shareText: async (text) => { if ((await shareText(text)) === 'copied') toast(t('Copiado. Pégalo donde quieras compartirlo.')); },
+    friendList: () => [...state.friends.values()].filter((f) => f.status === 'accepted').map((f) => ({ number: String(f.number), nick: f.nick })),
     saveFile: async (file) => { const where = await saveFile(file); if (where) toast(t('Guardado en {lugar}.', { lugar: where })); },
     onOnceChange: (on) => {
       document.getElementById('once-btn')?.classList.toggle('on', on);
@@ -551,6 +554,7 @@ function renderShell() {
           <div class="input-wrap">
             <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
             <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
+            <button type="button" class="icon-btn dm-only" id="cam-btn" title="Cámara: sacar foto o grabar video">${icon('camera')}</button>
             <button type="button" class="icon-btn dm-only" id="tools-btn" title="Juegos, pizarra, ubicación y zumbido">${icon('plus')}</button>
             <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Una sola vez: la próxima foto o vídeo se podrá ver una vez, y el audio, escuchar una vez"><span class="once-ico">1</span></button>
             <input id="input" autocomplete="off" spellcheck="true" maxlength="4000" placeholder="Escribe un mensaje…">
@@ -580,6 +584,12 @@ function renderShell() {
   const cur = () => state.windows.get(state.active);
   document.getElementById('call-audio').onclick = () => cur() && dm.startCall(cur(), false);
   document.getElementById('call-video').onclick = () => cur() && dm.startCall(cur(), true);
+  document.getElementById('cam-btn').onclick = async () => {
+    const w = cur();
+    if (!w || w.group) return;
+    const f = await cameraDialog({ t, esc, icon, mode: 'photo' });
+    if (f && state.windows.get(w.key)) dm.sendFile(w, f);
+  };
   document.getElementById('attach-btn').onclick = (e) => {
     const w = cur();
     if (!w) return;
@@ -957,16 +967,35 @@ function closeChatWith(number) { const w = state.windows.get('dm:' + number); if
 function chatMenu(anchor) {
   const w = state.windows.get(state.active);
   if (!w) return;
-  if (w.group) return openMenu(anchor, groups.menuItems(w).map((it) => (it === '-' ? it : { ...it, run: it.act })));
+  if (w.group) return openMenu(anchor, [...groups.menuItems(w).map((it) => (it === '-' ? it : { ...it, run: it.act })), { label: t('Exportar a PDF'), icon: 'pdf', run: () => exportChatPdf(w) }]);
   openMenu(anchor, [
     ...(['closed', 'rejected', 'offline'].includes(w.status) ? [{ label: t('Volver a conectar'), icon: 'refresh', run: () => openChat(w.peer.cid) }] : []),
     { label: t('Buscar en la conversación'), icon: 'search', run: () => dm.openSearch() },
     { label: t('Mensajes temporales'), icon: 'clock', hint: dm.ttlOf(w) ? ttlText(dm.ttlOf(w)) : t('Desactivados'), run: () => ttlMenu(w) },
     { label: t('Enviar zumbido'), icon: 'zap', run: () => dm.sendBuzz(w) },
     { label: t('Código de seguridad'), icon: 'shield', run: () => securityDialog(w) },
+    { label: t('Exportar a PDF'), icon: 'pdf', hint: t('La única copia: no se guarda en ningún servidor'), run: () => exportChatPdf(w) },
     '-',
     { label: t('Cerrar conversación'), icon: 'x', danger: true, run: () => dm.closeWindow(w) },
   ]);
+}
+/** Exportar la conversación a PDF (en el dispositivo) y guardarla o compartirla. */
+async function exportChatPdf(w) {
+  const log = document.getElementById('log');
+  if (!w.lines.length || !log?.children.length) return toast(t('No hay nada que exportar.'));
+  toast(t('Preparando el PDF…'));
+  try {
+    const title = w.group ? w.name : t('Conversación con {nick}', { nick: w.peer.nick });
+    const file = await conversationPdf({
+      title, logEl: log, appClass: document.getElementById('app').className + ' pdf-mode',
+      subtitle: `${t('Exportado el')} ${new Date().toLocaleString(getLang(), { dateStyle: 'long', timeStyle: 'short' })} · ${APP_NAME}`,
+      footer: t('Las conversaciones no se guardan en ningún servidor: este documento es la única copia.'),
+    });
+    openMenu(null, [
+      { label: t('Guardar'), icon: 'download', run: async () => { const where = await saveFile(file); if (where) toast(t('Guardado en {lugar}.', { lugar: where })); } },
+      { label: t('Compartir'), icon: 'share', run: () => shareFile(file).catch(() => {}) },
+    ], `<b>${esc(t('PDF listo'))}</b><small class="ugc">${esc(file.name)}</small>`);
+  } catch (e) { toast(t('No se pudo crear el PDF.')); console.warn(e); }
 }
 const TTLS = [0, 3600, 86400, 7 * 86400];
 const ttlText = (s) => (!s ? t('Desactivados') : dm.ttlLabel(s));

@@ -298,6 +298,7 @@ export function createDM(ctx) {
     input.disabled = !writable;
     input.placeholder = open ? `Mensaje privado para ${w.peer.nick}` : writable ? t('Mensaje para {nick} (le llegará al conectarse)', { nick: w.peer.nick }) : statusText(w);
     document.getElementById('attach-btn').disabled = !open;
+    const cb = document.getElementById('cam-btn'); if (cb) cb.disabled = !open;
     document.getElementById('mic-btn').disabled = !open;
     document.getElementById('emoji-btn').disabled = !writable;
     const tb = document.getElementById('tools-btn'); if (tb) tb.disabled = !open;
@@ -545,7 +546,7 @@ export function createDM(ctx) {
       case 'file-start': {
         if (!(m.size > 0 && m.size <= (w.relay ? MAX_FILE_RELAY : MAX_FILE))) return;
         const f = { fid: safeId(m.fid), name: String(m.name || 'archivo').slice(0, 200), mime: String(m.mime || ''), size: m.size, kind: ['image', 'video', 'audio', 'file'].includes(m.kind) ? m.kind : 'file',
-          voice: !!m.voice, transcript: typeof m.transcript === 'string' ? m.transcript.slice(0, 2000) : '', once: !!m.once && ['image', 'video', 'audio'].includes(m.kind), duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
+          voice: !!m.voice, transcript: typeof m.transcript === 'string' ? m.transcript.slice(0, 2000) : '', once: !!m.once && ['image', 'video', 'audio'].includes(m.kind), fwd: !!m.fwd, duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
         w.incoming.set('current', f);
         const msg = { mid: f.fid, mine: false, kind: 'file', file: f, ts: Date.now() };
         addMessage(w, msg); receipt(w, msg.mid);
@@ -668,6 +669,7 @@ export function createDM(ctx) {
     if (m.reply && typeof m.reply === 'object') x.reply = { mid: safeId(m.reply.mid), nick: String(m.reply.nick || '').slice(0, 20), text: String(m.reply.text || '').slice(0, 90) };
     const ttl = Number(m.ttl);
     if (ttl > 0) x.expires = ts + Math.min(ttl, 30 * 86400) * 1000;
+    if (m.fwd) x.fwd = true;
     return x;
   }
   /** Mensajes de control: por la conexión si la hay; si no, entre amigos, cifrados por el buzón. */
@@ -722,6 +724,17 @@ export function createDM(ctx) {
     const bubble = e.target.closest('#log .bub-row .bubble');
     closeActions();
     if (!bubble || e.target.closest('a, button, img, video, input, .voice, .once, .fact, .bquote')) return;
+    openActions(bubble);
+  });
+  // Mantener apretado (o clic derecho) abre las opciones en cualquier mensaje, también fotos, videos y audios
+  document.addEventListener('contextmenu', (e) => {
+    const bubble = e.target.closest('#log .bub-row .bubble');
+    if (!bubble || e.target.closest('input, .msg-actions')) return;
+    e.preventDefault();
+    closeActions();
+    openActions(bubble);
+  });
+  function openActions(bubble) {
     const row = bubble.closest('.bub-row');
     const w = state.windows.get(state.active);
     const mid = row.id.slice(2);
@@ -731,7 +744,10 @@ export function createDM(ctx) {
     bar.className = 'msg-actions';
     bar.innerHTML = `<span class="ma-reacts">${REACTIONS.map((r) => `<button type="button" data-ma-react="${r}" class="${msg.reactions?.me === r ? 'on' : ''}">${r}</button>`).join('')}</span>
       <span class="ma-btns"><button type="button" data-ma="reply" title="${esc(t('Responder'))}">${icon('back')}</button>
-      ${msg.kind === 'text' || msg.kind === 'action' ? `<button type="button" data-ma="copy" title="${esc(t('Copiar'))}">${icon('copy')}</button>` : ''}
+      ${canForward(msg) ? `<button type="button" data-ma="fwd" title="${esc(t('Reenviar'))}">${icon('forward')}</button>` : ''}
+      ${isText(msg) || msg.file?.blob ? `<button type="button" data-ma="share" title="${esc(t('Compartir'))}">${icon('share')}</button>` : ''}
+      ${isText(msg) || msg.file?.blob ? `<button type="button" data-ma="save" title="${esc(t('Guardar'))}">${icon('download')}</button>` : ''}
+      ${isText(msg) ? `<button type="button" data-ma="copy" title="${esc(t('Copiar'))}">${icon('copy')}</button>` : ''}
       <button type="button" data-ma="del" title="${esc(t('Borrar'))}">${icon('trash')}</button></span>`;
     row.appendChild(bar);
     // Si la burbuja está arriba del todo, la barra va debajo (si no, la taparía la cabecera)
@@ -744,6 +760,9 @@ export function createDM(ctx) {
       if (!b) return;
       if (b.dataset.ma === 'reply') { setReply(w, mid); return closeActions(); }
       if (b.dataset.ma === 'copy') { navigator.clipboard?.writeText(msg.text || '').then(() => toast(t('Copiado.'))); return closeActions(); }
+      if (b.dataset.ma === 'fwd') { closeActions(); return forwardDialog(w, msg); }
+      if (b.dataset.ma === 'share') { closeActions(); return shareMsg(w, msg); }
+      if (b.dataset.ma === 'save') { closeActions(); return saveMsg(w, msg); }
       if (b.dataset.ma === 'del') {
         bar.innerHTML = `<span class="ma-btns ma-del"><button type="button" data-ma="del-me">${esc(t('Borrar para mí'))}</button>${msg.mine ? `<button type="button" data-ma="del-all" class="danger">${esc(t('Borrar para todos'))}</button>` : ''}</span>`;
         return;
@@ -751,7 +770,7 @@ export function createDM(ctx) {
       if (b.dataset.ma === 'del-me') { removeMessage(w, mid); return closeActions(); }
       if (b.dataset.ma === 'del-all') { deleteForAll(w, mid); return closeActions(); }
     };
-  });
+  }
   // Tocar la cita lleva al mensaje original
   document.addEventListener('click', (e) => {
     const q = e.target.closest('#log .bquote[data-goto]');
@@ -762,6 +781,73 @@ export function createDM(ctx) {
     el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400);
   });
 
+
+  /* --- Reenviar, compartir y guardar cualquier mensaje --- */
+  const isText = (m) => m.kind === 'text' || m.kind === 'action';
+  const canForward = (m) => isText(m) || m.kind === 'sticker' || (m.kind === 'file' && m.file?.blob && !m.file.once);
+  const fileOfMsg = (m) => new File([m.file.blob], m.file.name, { type: m.file.mime || m.file.blob.type });
+  async function shareMsg(w, m) {
+    try {
+      if (m.file?.blob) return await (ctx.shareFile || shareDefault)(fileOfMsg(m));
+      const text = m.text || '';
+      if (ctx.shareText) return await ctx.shareText(text);
+      if (navigator.share) return await navigator.share({ text });
+      await navigator.clipboard?.writeText(text);
+      toast(t('Copiado. Pégalo donde quieras compartirlo.'));
+    } catch { /* cancelado */ }
+  }
+  async function saveMsg(w, m) {
+    try {
+      if (m.file?.blob) return await (ctx.saveFile || saveDefault)(fileOfMsg(m));
+      const who = m.mine ? state.nick : m.nick || w.peer.nick;
+      const when = new Date(m.ts).toLocaleString(getLang());
+      const file = new File([`${who} · ${when}\n\n${m.text || ''}\n`], `mensaje-${new Date(m.ts).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`, { type: 'text/plain' });
+      await (ctx.saveFile || saveDefault)(file);
+    } catch { /* cancelado */ }
+  }
+  /** Elegir a quién reenviar: conversaciones abiertas, grupos y amigos. */
+  function forwardDialog(w, m) {
+    const textual = m.kind !== 'file';
+    const wins = [...state.windows.values()].filter((x) => x.kind === 'dm' && x.key !== w.key && (x.group ? textual : true));
+    const friends = (ctx.friendList?.() || []).filter((f) => !wins.some((x) => x.key === 'dm:' + f.number) && 'dm:' + f.number !== w.key);
+    const items = [
+      ...wins.map((x) => ({ key: x.key, nick: x.group ? x.group.name : x.peer.nick, av: x.group ? `<span class="avatar grp">${icon('users')}</span>` : peerAvatar(x) })),
+      ...friends.map((f) => ({ number: String(f.number), nick: f.nick, av: ctx.photos ? ctx.photos.avatar('u:' + f.number, f.nick) : avatar(f.nick) })),
+    ];
+    if (!items.length) return toast(t('No tienes otras conversaciones ni amigos para reenviar.'));
+    const wrap = document.createElement('div');
+    wrap.className = 'dialog-wrap';
+    wrap.innerHTML = `<div class="dialog fwd-dialog" role="dialog" aria-modal="true"><h3>${esc(t('Reenviar a…'))}</h3>
+      ${m.kind === 'file' ? `<p class="muted small">${esc(t('Las fotos, videos y audios se reenvían cuando la otra persona está conectada.'))}</p>` : ''}
+      ${items.length > 6 ? `<div class="field search">${icon('search')}<input type="search" data-q placeholder="${esc(t('Buscar'))}"></div>` : ''}
+      <div class="fwd-list">${items.map((it, i) => `<button type="button" class="fwd-item" data-i="${i}">${it.av}<span class="ugc">${esc(it.nick)}</span></button>`).join('')}</div>
+      <div class="dialog-actions"><button type="button" class="btn" data-x>${esc(t('Cancelar'))}</button></div></div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
+    wrap.querySelector('[data-x]').onclick = close;
+    const q = wrap.querySelector('[data-q]');
+    if (q) q.oninput = () => wrap.querySelectorAll('.fwd-item').forEach((el) => { el.hidden = !el.textContent.toLowerCase().includes(q.value.trim().toLowerCase()); });
+    wrap.querySelector('.fwd-list').onclick = (e) => {
+      const b = e.target.closest('.fwd-item');
+      if (!b) return;
+      close();
+      forwardTo(items[Number(b.dataset.i)], m);
+    };
+  }
+  async function forwardTo(target, m) {
+    let tw = target.key ? state.windows.get(target.key) : state.windows.get('dm:' + target.number);
+    const peer = tw?.peer || { cid: target.number, nick: target.nick, reg: true, via: 'user' };
+    if (!tw || (!tw.group && isIdle(tw) && m.kind === 'file')) { await requestPrivate({ ...peer, via: tw?.via || 'user' }); tw = state.windows.get(target.key || 'dm:' + target.number); }
+    if (!tw) return toast(t('No se pudo reenviar.'));
+    if (m.kind === 'file') {
+      for (let i = 0; i < 40 && tw.status !== 'open'; i++) { await new Promise((r) => setTimeout(r, 500)); tw = state.windows.get(tw.key) || tw; }
+      if (tw.status !== 'open') return toast(t('{nick} no está conectado: las fotos, videos y audios se reenvían cuando está conectado.', { nick: target.nick }));
+      sendFile(tw, fileOfMsg(m), { fwd: true, ...(m.file.voice ? { voice: true, duration: m.file.duration, wave: m.file.wave } : {}) });
+    } else if (m.kind === 'sticker') sendSticker(tw, m.sticker, { fwd: true });
+    else sendText(tw, m.text, m.kind === 'action' ? 'action' : 'msg', { fwd: true });
+    toast(t('Reenviado a {nick}.', { nick: target.nick }));
+  }
   /* --- Responder citando --- */
   function setReply(w, mid) {
     const m = w.msgs.get(mid);
@@ -929,7 +1015,8 @@ export function createDM(ctx) {
     if (m.deleted) {
       return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} deleted" id="m-${m.mid}"><div class="bubble"><div class="btext"><i>🚫 ${esc(t(m.mine ? 'Borraste este mensaje' : 'Se borró este mensaje'))}</i><span class="meta-spacer"></span></div>${meta}</div></div>`;
     }
-    const quote = m.reply ? `<div class="bquote" data-goto="${esc(m.reply.mid)}"><b class="ugc">${esc(m.reply.nick)}</b><span class="ugc">${esc(m.reply.text)}</span></div>` : '';
+    const fwdTag = m.fwd || m.file?.fwd ? `<small class="bfwd">${icon('forward')} ${esc(t('Reenviado'))}</small>` : '';
+    const quote = fwdTag + (m.reply ? `<div class="bquote" data-goto="${esc(m.reply.mid)}"><b class="ugc">${esc(m.reply.nick)}</b><span class="ugc">${esc(m.reply.text)}</span></div>` : '');
     const rv = m.reactions ? Object.values(m.reactions).filter(Boolean) : [];
     const rc = rv.reduce((a, e) => ((a[e] = (a[e] || 0) + 1), a), {});
     const reacts = rv.length ? `<div class="breacts">${Object.entries(rc).map(([e, n]) => `<span>${esc(e)}${n > 1 ? `<small>${n}</small>` : ''}</span>`).join('')}</div>` : '';
@@ -994,7 +1081,7 @@ export function createDM(ctx) {
   }
   const ring = (fid) => `<span class="progress-ring" data-progress="${fid}" style="--p:0"><span>0%</span></span>`;
   /** Botones Compartir y Guardar de un archivo recibido o enviado. */
-  const fileActions = (f) => (f.blob ? `<span class="fact">${ctx.canShareFiles?.() ?? canShareDefault() ? `<button type="button" class="fact-btn" data-fshare="${esc(f.fid)}" title="Compartir">${icon('share')}</button>` : ''}<button type="button" class="fact-btn" data-fsave="${esc(f.fid)}" title="Guardar">${icon('download')}</button></span>` : '');
+  const fileActions = (f) => (f.blob ? `<span class="fact"><button type="button" class="fact-btn" data-ffwd="${esc(f.fid)}" title="Reenviar">${icon('forward')}</button>${ctx.canShareFiles?.() ?? canShareDefault() ? `<button type="button" class="fact-btn" data-fshare="${esc(f.fid)}" title="Compartir">${icon('share')}</button>` : ''}<button type="button" class="fact-btn" data-fsave="${esc(f.fid)}" title="Guardar">${icon('download')}</button></span>` : '');
   function onceHtml(w, m, f) {
     // Textos según el tipo: el audio se escucha; la foto y el vídeo se ven
     const L = {
@@ -1080,6 +1167,8 @@ export function createDM(ctx) {
   });
   const fileOf = (fid) => { const w = state.windows.get(state.active); const m = w?.msgs.get(fid); return m?.file ? { w, m, f: m.file } : {}; };
   document.addEventListener('click', (e) => {
+    const fw = e.target.closest('[data-ffwd]');
+    if (fw) { e.preventDefault(); e.stopPropagation(); const { w, m } = fileOf(fw.dataset.ffwd); if (m) forwardDialog(w, m); return; }
     const sh = e.target.closest('[data-fshare]'), sv = e.target.closest('[data-fsave]'), once = e.target.closest('[data-once]');
     if (!sh && !sv && !once) return;
     e.preventDefault(); e.stopPropagation();
@@ -1145,10 +1234,12 @@ export function createDM(ctx) {
     w.replyTo = null; renderReplyBar(w);
     return x;
   }
-  const localExtras = (x) => ({ reply: x.reply || null, expires: x.ttl ? Date.now() + x.ttl * 1000 : 0 });
-  function sendText(w, text, kind = 'msg') {
+  const localExtras = (x) => ({ reply: x.reply || null, expires: x.ttl ? Date.now() + x.ttl * 1000 : 0, fwd: !!x.fwd });
+  // Reenviado: sin la cita que se estaba escribiendo en esa conversación
+  const fwdExtras = (w) => ({ fwd: true, ...(w.ttl ? { ttl: w.ttl } : {}) });
+  function sendText(w, text, kind = 'msg', opts = {}) {
     const mid = crypto.randomUUID();
-    const x = extras(w);
+    const x = opts.fwd ? fwdExtras(w) : extras(w);
     const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: detectLang(text) || getLang(), ...x }; // idioma real del texto
     const local = { mid, mine: true, kind: data.kind, text, ts: Date.now(), ...localExtras(x) };
     if (w.group) return sendGroup(w, data, local);
@@ -1156,10 +1247,10 @@ export function createDM(ctx) {
     sendJSON(w, data);
     addMessage(w, local);
   }
-  function sendSticker(w, id) {
+  function sendSticker(w, id, opts = {}) {
     if (!STICKERS.includes(id)) return;
     const mid = crypto.randomUUID();
-    const x = extras(w);
+    const x = opts.fwd ? fwdExtras(w) : extras(w);
     const local = { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now(), ...localExtras(x) };
     if (w.group) return sendGroup(w, { t: 'sticker', mid, id, ...x }, local);
     if (w.status !== 'open') return canMail(w) && sendViaMail(w, { t: 'sticker', mid, id, ...x }, local);
@@ -1702,7 +1793,7 @@ export function createDM(ctx) {
     input.disabled = false;
     input.placeholder = t('Mensaje en {grupo}', { grupo: w.group.name });
     const tb = document.getElementById('tools-btn'); if (tb) tb.disabled = false; // juegos
-    for (const id of ['attach-btn', 'mic-btn', 'once-btn']) { const b = document.getElementById(id); if (b) { b.disabled = true; b.classList.remove('on'); } }
+    for (const id of ['attach-btn', 'cam-btn', 'mic-btn', 'once-btn']) { const b = document.getElementById(id); if (b) { b.disabled = true; b.classList.remove('on'); } }
     document.getElementById('emoji-btn').disabled = false;
   }
   async function sendGroup(w, data, local) {

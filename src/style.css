@@ -1137,3 +1137,20 @@ button.bn-c:hover { background: #93c5fd; }
 .dg-feed .ok { color: #16a34a; font-weight: 700; }
 .dg-guess { display: flex; gap: 6px; }
 .dg-guess input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font: inherit; background: var(--panel, #fff); color: var(--text); }
+
+/* ---------- Exportar a PDF (app) y reenviar ---------- */
+.pdf-page { color: #171a21; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+.pdf-page .pdf-log { overflow: visible !important; height: auto !important; padding: 0 !important; background: none !important; display: flex; flex-direction: column; }
+.pdf-page .pdf-head { border-bottom: 2px solid #e11d48; padding: 0 0 10px; margin: 0 0 14px; }
+.pdf-page .pdf-head h1 { margin: 0 0 4px; font-size: 22px; }
+.pdf-page .pdf-head p, .pdf-page .pdf-foot { margin: 0; color: #5f6678; font-size: 12px; }
+.pdf-page .pdf-foot { margin-top: 16px; padding-top: 8px; border-top: 1px solid #ddd; }
+.pdf-page .msg-actions, .pdf-page .fact { display: none !important; }
+.pdf-video { padding: 30px 16px; background: #111; color: #fff; border-radius: 10px; text-align: center; }
+.bfwd { display: flex; align-items: center; gap: 4px; font-size: .74rem; font-style: italic; color: var(--muted); margin: 0 0 2px; }
+.bfwd svg { width: 12px; height: 12px; }
+.fwd-list { display: grid; gap: 2px; max-height: 50vh; overflow-y: auto; margin: 8px -6px; }
+.fwd-item { display: flex; align-items: center; gap: 10px; border: 0; background: none; color: inherit; font: inherit; text-align: left; padding: 8px 6px; border-radius: 10px; cursor: pointer; }
+.fwd-item:hover { background: var(--hover, rgba(127, 127, 127, .1)); }
+.fwd-item .avatar { width: 34px; height: 34px; }
+.msg-actions .ma-btns { flex-wrap: wrap; }

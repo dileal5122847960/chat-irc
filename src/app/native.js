@@ -168,6 +168,13 @@ export function canShareFiles() {
   try { return !!navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.txt', { type: 'text/plain' })] }); } catch { return false; }
 }
 /** Abre el menú del sistema para enviar el archivo por correo, otra app de mensajería, Drive… */
+/** Compartir un texto (mensaje) con otras apps. */
+export async function shareText(text) {
+  if (isNative) return Share.share({ text });
+  if (navigator.share) return navigator.share({ text });
+  await navigator.clipboard?.writeText(text);
+  return 'copied';
+}
 export async function shareFile(file) {
   if (isNative) {
     const w = await Filesystem.writeFile({ path: 'compartir/' + safeName(file.name), data: await toBase64(file), directory: Directory.Cache, recursive: true });

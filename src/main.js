@@ -566,7 +566,8 @@ function renderClient() {
           <button type="button" class="icon-btn action-toggle" id="action-btn" title="Escribir como acción (* tu_nick hace algo)">${icon('sparkle')}</button>
           <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
           <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
-            <button type="button" class="icon-btn dm-only" id="tools-btn" title="Juegos, pizarra, ubicación y zumbido">${icon('plus')}</button>
+            <button type="button" class="icon-btn dm-only" id="cam-btn" title="Cámara: sacar foto o grabar video">${icon('camera')}</button>
+          <button type="button" class="icon-btn dm-only" id="tools-btn" title="Juegos, pizarra, ubicación y zumbido">${icon('plus')}</button>
             <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Una sola vez: la próxima foto o vídeo se podrá ver una vez, y el audio, escuchar una vez"><span class="once-ico">1</span></button>
           <input id="input" autocomplete="off" spellcheck="true" maxlength="${MAX_MSG}" placeholder="Escribe un mensaje…">
           <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
@@ -634,6 +635,12 @@ function renderClient() {
   document.getElementById('call-video').onclick = () => {
     const w = state.windows.get(state.active);
     if (w?.kind === 'dm') dm.startCall(w, true); else if (w && w.key !== 'status') gc.join(w);
+  };
+  document.getElementById('cam-btn').onclick = async () => {
+    const w = state.windows.get(state.active);
+    if (w?.kind !== 'dm' || w.group) return;
+    const f = await cameraDialog({ t, esc, icon, mode: 'photo' });
+    if (f && state.windows.get(w.key)) dm.sendFile(w, f);
   };
   document.getElementById('attach-btn').onclick = (e) => {
     const w = state.windows.get(state.active);
@@ -1568,6 +1575,7 @@ const dmCtx = {
   // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
   onRequestSent: (peer, w) => { if (w.via === 'user' && w.autoCall !== undefined) friends.notify(peer.cid, 'call', w.id, !!w.autoCall); },
   onBuzz: () => playTone('call', 'digital'),
+  friendList: () => (state.registered ? friends.accepted() : []),
   onBackgroundOpen: (w) => { beep(); toast(t('{nick} abrió una conversación privada contigo.', { nick: w.peer.nick })); },
 };
 const dm = createDM(dmCtx);
