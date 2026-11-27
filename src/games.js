@@ -23,7 +23,7 @@ const sha = async (s) => hex(await crypto.subtle.digest('SHA-256', new TextEncod
 export const GAME_LIST = [
   { type: 'c4', emoji: '🔴', name: 'Cuatro en línea', min: 2, max: 2 },
   { type: 'bn', emoji: '🚢', name: 'Batalla naval', min: 2, max: 2, dmOnly: true },
-  { type: 'gen', emoji: '🎲', name: 'Generala', min: 1, max: 6 },
+  { type: 'gen', emoji: '🎲', name: 'Generala', min: 2, max: 6 },
   { type: 'basta', emoji: '✍️', name: 'Basta (Tutti frutti)', min: 2, max: 10 },
   { type: 'dg', emoji: '🖍️', name: 'Dibujá y adiviná', min: 2, max: 10 },
 ];
@@ -45,7 +45,7 @@ export function createGames(api) {
     const id = uid();
     if (type === 'bn') return bnCreate(w, id);
     const s = { type, host: me(w), phase: 'lobby', players: [{ id: me(w) }], v: 0 };
-    if (w.via !== 'group') s.max = 2; // en un privado juegan los dos
+    if (!w.group) { s.max = 2; s.players.push({ id: String(w.peer.cid) }); } // en un privado juegan los dos (ya anotados)
     const gm = { w, s, local: {} };
     games.set(id, gm);
     addMessage(w, { mid: id, mine: true, kind: 'tool', tool: 'game', ts: Date.now() });
@@ -299,7 +299,7 @@ export function createGames(api) {
     const name = (p) => (p.id === myId ? t('Tú') : nick(w, p.id));
     const status = s.phase === 'end'
       ? (s.servida ? t('¡Generala servida! Ganó {nick}', { nick: name(s.players[pidx(s, s.winner)]) }) : t('Ganó {nick}', { nick: name(s.players[pidx(s, s.winner)]) }))
-      : myTurn ? t('Tu turno · tirada {n} de 3', { n: s.rolls }) : t('Turno de {nick}', { nick: name(cur) });
+      : myTurn ? (s.rolls ? t('Tu turno · tirada {n} de 3', { n: s.rolls }) : t('Tu turno: tirá los dados')) : t('Turno de {nick}', { nick: name(cur) });
     const dice = s.dice.map((d, i) => `<button type="button" class="die ${gm.local.held[i] ? 'held' : ''}" data-g-hold="${id}" data-i="${i}" ${myTurn && s.rolls && s.rolls < 3 ? '' : 'disabled'}>${d ? DIE[d] : '·'}</button>`).join('');
     const head = s.players.map((p) => `<th class="ugc ${p.id === cur?.id && s.phase === 'play' ? 'cur' : ''}">${esc(name(p).slice(0, 8))}</th>`).join('');
     const rows = GEN_CATS.map((c) => `<tr><td>${esc(t(GEN_NAMES[c]))}</td>${s.players.map((p) => {

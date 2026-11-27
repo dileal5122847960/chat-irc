@@ -580,6 +580,7 @@ const ENTRIES = [
   ['¡Listo!', 'Ready!', 'Pronto!', 'Prêt !', 'Pronto!'],
   ['Partida verificada: nadie hizo trampa.', 'Game verified: nobody cheated.', 'Partida verificada: ninguém trapaceou.', 'Partie vérifiée : personne n’a triché.', 'Partita verificata: nessuno ha barato.'],
   ['Las respuestas del otro no coinciden con su flota.', 'The other player’s answers do not match their fleet.', 'As respostas do outro não coincidem com a frota.', 'Les réponses de l’autre ne correspondent pas à sa flotte.', 'Le risposte dell’altro non corrispondono alla sua flotta.'],
+  ['Tu turno: tirá los dados', 'Your turn: roll the dice', 'Sua vez: jogue os dados', 'À toi : lance les dés', 'Tocca a te: lancia i dadi'],
   ['Ahora son amigos.', 'You are now friends.', 'Agora vocês são amigos.', 'Vous êtes maintenant amis.', 'Ora siete amici.'],
   ['Solo puedes hablar con tus amigos.', 'You can only talk to your friends.', 'Você só pode conversar com seus amigos.', 'Tu ne peux parler qu’avec tes amis.', 'Puoi parlare solo con i tuoi amici.'],
   ['Nota de voz', 'Voice note', 'Mensagem de voz', 'Message vocal', 'Nota vocale'],

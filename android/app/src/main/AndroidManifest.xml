@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 11+: para poder abrir la cámara del sistema (sacar foto o grabar video en los privados) -->
+    <queries>
+        <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+        <intent><action android:name="android.media.action.VIDEO_CAPTURE" /></intent>
+    </queries>
+
     <application
         android:requestLegacyExternalStorage="true"
         android:allowBackup="true"
