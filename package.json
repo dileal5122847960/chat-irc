@@ -34,6 +34,6 @@
     "jsqr": "^1.4.0",
     "qrcode-generator": "^1.5.2"
   },
-  "androidVersion": "1.1.0",
-  "windowsVersion": "1.1.0"
+  "androidVersion": "1.1.1",
+  "windowsVersion": "1.1.1"
 }

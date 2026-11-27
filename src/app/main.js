@@ -565,7 +565,7 @@ function renderShell() {
   document.getElementById('m-tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); };
   document.getElementById('menu-btn').onclick = (e) => accountMenu(e.currentTarget);
   document.getElementById('me-photo').onclick = () => profileSheet();
-  document.getElementById('add-friend').onclick = addFriendDialog;
+  document.getElementById('add-friend').onclick = () => addFriendDialog();
   document.getElementById('m-list').onclick = onListClick;
   document.getElementById('back-btn').onclick = () => activate('status');
   document.getElementById('chat-menu').onclick = (e) => chatMenu(e.currentTarget);
@@ -885,6 +885,7 @@ async function scanFriend() {
   addFriendDialog(n);
 }
 async function addFriendDialog(prefill) {
+  if (typeof prefill !== 'number' && !/^\d{8}$/.test(String(prefill ?? ''))) prefill = null; // solo un número (no un evento)
   let found = null;
   const v = await openDialog({
     title: t('Agregar amigo'),
