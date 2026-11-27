@@ -825,3 +825,26 @@ body { font-size: calc(15px * var(--fs, 1)); }
 .profile-card small { color: var(--muted); }
 .profile-card .chip-number { margin-top: 6px; }
 .ph-mask::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .85); }
+/* Compartir / guardar archivos del chat */
+.fact { display: flex; gap: 6px; justify-content: flex-end; margin: 4px 2px 0; }
+.bmedia { position: relative; }
+.bmedia .fact { position: absolute; top: 6px; right: 6px; margin: 0; }
+.fact-btn { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, .45); color: #fff; backdrop-filter: blur(4px); }
+.fact-btn .ico { width: 16px; height: 16px; }
+.bubble > .fact .fact-btn, .doc + .fact .fact-btn, .voice + .fact .fact-btn { background: var(--hover); color: var(--dm-meta); }
+/* Ver una vez */
+.once-ico { width: 22px; height: 22px; border-radius: 50%; border: 2px dashed currentColor; display: inline-grid; place-items: center; font-weight: 800; font-size: .78rem; line-height: 1; flex: none; }
+.once-btn.on { color: #fff; background: var(--accent); }
+.once-btn.on .once-ico { border-style: solid; }
+.once { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--hover); text-align: left; min-width: 200px; color: var(--text); }
+button.once { cursor: pointer; border: 1px solid var(--border); }
+button.once:hover { border-color: var(--dm-accent); }
+.once .once-ico { width: 34px; height: 34px; color: var(--dm-accent); font-size: 1rem; }
+.once b, .once small { display: block; }
+.once small { color: var(--dm-meta); font-size: .76rem; }
+.once.opened, .once.mine { opacity: .85; }
+.once-view .once-tag { color: #fff; font-size: .85rem; background: rgba(0, 0, 0, .5); padding: 6px 10px; border-radius: 999px; }
+.once-view video { max-width: 96vw; max-height: 86vh; }
+.m-chat.dragging::after { content: ''; position: absolute; inset: 0; background: rgba(225, 29, 72, .12); border: 2px dashed var(--accent); pointer-events: none; }
+.m-chat { position: relative; }
+.bmedia .fact { z-index: 3; }

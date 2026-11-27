@@ -165,6 +165,13 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   **Mi perfil** (app: foto en la cabecera o menú ⋮; web: menú de usuario): ver la foto, cambiarla, **ajustarla** (editor
   `editPhoto`: arrastrar + zoom, máscara circular; se guarda el original `myphoto-src:<uid>`), quitarla, editar nombre/nick.
   Nick y nombre se envían a los amigos conectados al instante (mensaje `profile` por el DataChannel, solo `via 'user'`). Español de Argentina: «son amigos», «pueden» (no «sois/podéis»).
+- **Archivos en privados:** pegar (Ctrl+V, p. ej. capturas) y arrastrar, en web y app. Botones **Compartir** (correo, otras apps:
+  Android `@capacitor/share` + `@capacitor/filesystem`; navegador `navigator.share` si existe) y **Guardar** (Android:
+  Documentos/ChamuFlac; Windows/web: descarga) en fotos, vídeos, audios y documentos (`ctx.shareFile/saveFile/canShareFiles`).
+- **Ver una vez** (botón «1» junto al clip): la próxima foto/vídeo/audio se envía con `once`; quien la recibe la abre una sola
+  vez en un visor sin guardar ni compartir; al cerrar (o terminar el audio) se borra y se envía `viewed` → «Abierta».
+  Quien la envía tampoco conserva la imagen. (No impide capturas de pantalla.)
+- El **nick** también se cambia desde Mi perfil en la app (es de la cuenta: cambia en todos los dispositivos).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).

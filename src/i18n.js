@@ -459,6 +459,23 @@ const ENTRIES = [
   ['Arrastra para moverla y usa el control para acercarla o alejarla.', 'Drag to move it and use the slider to zoom in or out.', 'Arraste para movê-la e use o controle para aproximar ou afastar.', 'Fais-la glisser pour la déplacer et utilise le curseur pour zoomer.', 'Trascinala per spostarla e usa il cursore per ingrandirla o rimpicciolirla.'],
   ['Copiar mi número', 'Copy my number', 'Copiar meu número', 'Copier mon numéro', 'Copia il mio numero'],
   ['Así te ven tus amigos en los privados. La foto no se guarda en ningún servidor.', 'This is how your friends see you in private chats. The photo is not stored on any server.', 'É assim que seus amigos veem você nos privados. A foto não fica guardada em nenhum servidor.', 'C’est ainsi que tes amis te voient en privé. La photo n’est stockée sur aucun serveur.', 'Così ti vedono i tuoi amici nelle chat private. La foto non viene salvata su nessun server.'],
+  ['Foto para ver una vez', 'View-once photo', 'Foto de visualização única', 'Photo à voir une fois', 'Foto visualizzabile una volta'],
+  ['Vídeo para ver una vez', 'View-once video', 'Vídeo de visualização única', 'Vidéo à voir une fois', 'Video visualizzabile una volta'],
+  ['Audio para ver una vez', 'Listen-once audio', 'Áudio de reprodução única', 'Audio à écouter une fois', 'Audio ascoltabile una volta'],
+  ['Abierta', 'Opened', 'Aberta', 'Ouverte', 'Aperta'],
+  ['Sin abrir', 'Not opened yet', 'Ainda não aberta', 'Pas encore ouverte', 'Non ancora aperta'],
+  ['Escuchar (una sola vez)', 'Listen (only once)', 'Ouvir (só uma vez)', 'Écouter (une seule fois)', 'Ascolta (una sola volta)'],
+  ['Ver vídeo (una sola vez)', 'Watch video (only once)', 'Ver vídeo (só uma vez)', 'Voir la vidéo (une seule fois)', 'Guarda il video (una sola volta)'],
+  ['Ver foto (una sola vez)', 'View photo (only once)', 'Ver foto (só uma vez)', 'Voir la photo (une seule fois)', 'Vedi la foto (una sola volta)'],
+  ['Se borrará después de abrirla', 'It will be deleted after opening', 'Será apagada depois de aberta', 'Elle sera supprimée après ouverture', 'Verrà eliminata dopo l’apertura'],
+  ['Reproduciendo…', 'Playing…', 'Reproduzindo…', 'Lecture…', 'Riproduzione…'],
+  ['Se borrará al cerrar', 'It will be deleted when closed', 'Será apagada ao fechar', 'Elle sera supprimée à la fermeture', 'Verrà eliminata alla chiusura'],
+  ['Compartir', 'Share', 'Compartilhar', 'Partager', 'Condividi'],
+  ['Guardado en {lugar}.', 'Saved to {lugar}.', 'Salvo em {lugar}.', 'Enregistré dans {lugar}.', 'Salvato in {lugar}.'],
+  ['La próxima foto, vídeo o audio se podrá ver una sola vez.', 'Your next photo, video or audio can be opened only once.', 'A próxima foto, vídeo ou áudio só poderá ser aberto uma vez.', 'Ta prochaine photo, vidéo ou audio ne pourra être ouvert qu’une fois.', 'La prossima foto, video o audio si potrà aprire una sola volta.'],
+  ['Ver una vez: la próxima foto, vídeo o audio se podrá abrir una sola vez', 'View once: your next photo, video or audio can be opened only once', 'Ver uma vez: a próxima foto, vídeo ou áudio só poderá ser aberto uma vez', 'Voir une fois : ta prochaine photo, vidéo ou audio ne pourra être ouvert qu’une fois', 'Visualizza una volta: la prossima foto, video o audio si potrà aprire una sola volta'],
+  ['Nombre y apellido (solo lo ven tus amigos)', 'First and last name (only your friends see it)', 'Nome e sobrenome (só seus amigos veem)', 'Prénom et nom (visibles seulement par tes amis)', 'Nome e cognome (lo vedono solo i tuoi amici)'],
+  ['Es el nombre que se ve en grande. Es de tu cuenta: cambia en todos tus dispositivos.', 'It is the name shown in large letters. It belongs to your account: it changes on all your devices.', 'É o nome que aparece em destaque. É da sua conta: muda em todos os seus dispositivos.', 'C’est le nom affiché en grand. Il appartient à ton compte : il change sur tous tes appareils.', 'È il nome mostrato in grande. È del tuo account: cambia su tutti i tuoi dispositivi.'],
 ];
 
 // Textos con partes variables: [expresión regular sobre el español, inglés, portugués, francés, italiano]

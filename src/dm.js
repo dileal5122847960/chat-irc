@@ -116,6 +116,10 @@ export function createDM(ctx) {
     sendJSON(w, { t: 'profile', nick: state.nick, first: p.first || '', last: p.last || '' });
   }
   function broadcastProfile() { for (const w of state.windows.values()) if (w.kind === 'dm' && w.status === 'open') { sendProfile(w); sendJSON(w, { t: 'nick', nick: state.nick }); } }
+  // «Ver una vez»: el próximo archivo (foto, vídeo o audio) solo se podrá abrir una vez
+  let onceMode = false;
+  const setOnceMode = (on) => { onceMode = !!on; ctx.onOnceChange?.(onceMode); };
+  const onceable = (kind) => kind === 'image' || kind === 'video' || kind === 'audio';
   const isIdle = (w) => ['closed', 'rejected', 'offline'].includes(w.status); // sin conexión en curso
   const findByPeer = (cid) => dmWindows().find((w) => w.peer.cid === cid && w.status !== 'closed' && w.status !== 'rejected');
   const canMail = (w) => w.via === 'user' && !!ctx.mailbox; // amigos: se puede escribir aunque no estén conectados
@@ -287,6 +291,8 @@ export function createDM(ctx) {
     document.getElementById('attach-btn').disabled = !open;
     document.getElementById('mic-btn').disabled = !open;
     document.getElementById('emoji-btn').disabled = !writable;
+    const ob = document.getElementById('once-btn');
+    if (ob) { ob.disabled = !open; ob.classList.toggle('on', open && onceMode); }
   }
   /** Llamado por la app al mostrar esta ventana. */
   function onActivate(w) {
@@ -526,7 +532,7 @@ export function createDM(ctx) {
       case 'file-start': {
         if (!(m.size > 0 && m.size <= (w.relay ? MAX_FILE_RELAY : MAX_FILE))) return;
         const f = { fid: safeId(m.fid), name: String(m.name || 'archivo').slice(0, 200), mime: String(m.mime || ''), size: m.size, kind: ['image', 'video', 'audio', 'file'].includes(m.kind) ? m.kind : 'file',
-          voice: !!m.voice, duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
+          voice: !!m.voice, once: !!m.once && ['image', 'video', 'audio'].includes(m.kind), duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
         w.incoming.set('current', f);
         const msg = { mid: f.fid, mine: false, kind: 'file', file: f, ts: Date.now() };
         addMessage(w, msg); receipt(w, msg.mid);
@@ -564,6 +570,11 @@ export function createDM(ctx) {
         return;
       }
       case 'cam': w.peerCam = !!m.on; return renderCallUI(w);
+      case 'viewed': { // el otro abrió algo que le envié «para ver una vez»
+        const sent = w.msgs.get(safeId(m.fid));
+        if (sent?.mine && sent.file?.once) { sent.file.opened = true; rerender(w, sent.mid); }
+        return;
+      }
       case 'photo': {
         if (!ctx.photos || (m.d !== null && typeof m.d !== 'string') || !ctx.photos.valid(m.d)) return;
         ctx.photos.set(photoKey(w), m.d);
@@ -691,7 +702,18 @@ export function createDM(ctx) {
     return 'file';
   }
   const ring = (fid) => `<span class="progress-ring" data-progress="${fid}" style="--p:0"><span>0%</span></span>`;
+  /** Botones Compartir y Guardar de un archivo recibido o enviado. */
+  const fileActions = (f) => (f.blob ? `<span class="fact">${ctx.canShareFiles?.() ?? canShareDefault() ? `<button type="button" class="fact-btn" data-fshare="${esc(f.fid)}" title="Compartir">${icon('share')}</button>` : ''}<button type="button" class="fact-btn" data-fsave="${esc(f.fid)}" title="Guardar">${icon('download')}</button></span>` : '');
+  function onceHtml(w, m, f) {
+    const what = f.kind === 'image' ? 'Foto' : f.kind === 'video' ? 'Vídeo' : 'Audio';
+    const ico = `<span class="once-ico">1</span>`;
+    if (m.mine) return `<div class="once mine">${ico}<span><b>${esc(t(what + ' para ver una vez'))}</b><small>${esc(t(f.opened ? 'Abierta' : !f.url ? 'Enviando…' : 'Sin abrir'))}</small></span></div>`;
+    if (!f.url) return `<div class="once">${ico}<span><b>${esc(t(what + ' para ver una vez'))}</b><small>${ring(f.fid)}</small></span></div>`;
+    if (f.opened) return `<div class="once opened">${ico}<span><b>${esc(t(what + ' para ver una vez'))}</b><small>${esc(t('Abierta'))}</small></span></div>`;
+    return `<button type="button" class="once" data-once="${esc(f.fid)}">${ico}<span><b>${esc(t(f.kind === 'audio' ? 'Escuchar (una sola vez)' : f.kind === 'video' ? 'Ver vídeo (una sola vez)' : 'Ver foto (una sola vez)'))}</b><small>${esc(t('Se borrará después de abrirla'))}</small></span></button>`;
+  }
   function fileHtml(w, m, f) {
+    if (f.once) return onceHtml(w, m, f);
     const loading = !f.url;
     if (f.voice || f.kind === 'audio') {
       const bars = (f.wave || Array(36).fill(0.3)).map((v) => `<i style="height:${Math.max(12, Math.round(v * 100))}%"></i>`).join('');
@@ -699,18 +721,18 @@ export function createDM(ctx) {
         <span class="voice-av">${m.mine ? myAvatar() : peerAvatar(w)}<i class="mic-mini">${icon('mic')}</i></span>
         <button class="voice-play" aria-label="Reproducir" ${loading ? 'disabled' : ''}>${loading ? ring(f.fid) : icon('play')}</button>
         <span class="voice-track"><span class="wave">${bars}</span><small class="voice-time">${fmtDur(f.duration)}</small></span>
-        <button class="voice-speed" title="Velocidad">1×</button></div>`;
+        <button class="voice-speed" title="Velocidad">1×</button></div>${fileActions(f)}`;
     }
     if (f.kind === 'image' || f.kind === 'video') {
       const inner = loading ? `<div class="media-ph">${icon(f.kind === 'image' ? 'image' : 'video')}${ring(f.fid)}</div>`
         : f.kind === 'image' ? `<img src="${f.url}" alt="${esc(f.name)}" data-zoom>` : `<video src="${f.url}" controls playsinline preload="metadata"></video>`;
-      return `<div class="bmedia">${inner}</div>`;
+      return `<div class="bmedia">${inner}${fileActions(f)}</div>`;
     }
     const ext = (f.name.split('.').pop() || '').slice(0, 4).toUpperCase();
     const tag = loading ? 'div' : 'a';
     return `<${tag} class="doc" ${loading ? '' : `href="${f.url}" download="${esc(f.name)}"`}><span class="doc-ico">${esc(ext) || icon('file')}</span>
       <span class="doc-info"><b>${esc(f.name)}</b><small>${fmtSize(f.size)}${ext ? ' · ' + esc(ext) : ''}</small></span>
-      <span class="doc-dl">${loading ? ring(f.fid) : icon('download')}</span></${tag}>`;
+      <span class="doc-dl">${loading ? ring(f.fid) : icon('download')}</span></${tag}>${fileActions(f)}`;
   }
   function progress(fid, p) {
     const pct = Math.min(100, Math.round(p * 100));
@@ -760,6 +782,56 @@ export function createDM(ctx) {
     audio.onended = () => { btn.innerHTML = icon('play'); bars.forEach((b) => b.classList.remove('played')); v.querySelector('.voice-time').textContent = fmtDur(Number(v.dataset.dur)); playing = null; };
     audio.play();
   });
+  const fileOf = (fid) => { const w = state.windows.get(state.active); const m = w?.msgs.get(fid); return m?.file ? { w, m, f: m.file } : {}; };
+  document.addEventListener('click', (e) => {
+    const sh = e.target.closest('[data-fshare]'), sv = e.target.closest('[data-fsave]'), once = e.target.closest('[data-once]');
+    if (!sh && !sv && !once) return;
+    e.preventDefault(); e.stopPropagation();
+    const { w, m, f } = fileOf((sh || sv || once).dataset.fshare || (sh || sv || once).dataset.fsave || (sh || sv || once).dataset.once);
+    if (!f) return;
+    if (once) return openOnce(w, m, f);
+    const file = new File([f.blob], f.name, { type: f.mime || f.blob.type });
+    if (sh) return (ctx.shareFile || shareDefault)(file).catch(() => {});
+    (ctx.saveFile || saveDefault)(file).catch(() => {});
+  }, true);
+  /** Abre algo «para ver una vez»; al cerrarlo (o terminar el audio) se borra y se avisa al otro. */
+  function openOnce(w, m, f) {
+    const finish = () => {
+      if (f.opened) return;
+      f.opened = true;
+      try { URL.revokeObjectURL(f.url); } catch { /* nada */ }
+      f.url = 'gone'; f.blob = null;
+      sendJSON(w, { t: 'viewed', fid: f.fid });
+      rerender(w, m.mid);
+    };
+    if (f.kind === 'audio') {
+      const audio = new Audio(f.url);
+      const el = document.querySelector(`[data-once="${CSS.escape(f.fid)}"] small`);
+      if (el) el.textContent = t('Reproduciendo…');
+      audio.onended = finish; audio.onpause = finish; audio.onerror = finish;
+      return audio.play().catch(finish);
+    }
+    const lb = document.createElement('div');
+    lb.className = 'lightbox once-view';
+    lb.innerHTML = (f.kind === 'video' ? `<video src="${f.url}" autoplay playsinline controls controlslist="nodownload"></video>` : `<img src="${f.url}" alt="">`)
+      + `<div class="lb-actions"><span class="once-tag">1 · ${esc(t('Se borrará al cerrar'))}</span><button class="icon-btn light" title="Cerrar">${icon('x')}</button></div>`;
+    lb.oncontextmenu = (e) => e.preventDefault();
+    lb.onclick = (e) => { if (e.target.closest('video') && !e.target.closest('.lb-actions')) return; lb.remove(); finish(); };
+    document.body.appendChild(lb);
+  }
+  function canShareDefault() {
+    try { return !!navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.txt', { type: 'text/plain' })] }); } catch { return false; }
+  }
+  async function shareDefault(file) {
+    if (canShareDefault() && navigator.canShare({ files: [file] })) return navigator.share({ files: [file], title: file.name });
+    return saveDefault(file);
+  }
+  async function saveDefault(file) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file); a.download = file.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  }
   function openLightbox(src) {
     const lb = document.createElement('div');
     lb.className = 'lightbox';
@@ -839,7 +911,8 @@ export function createDM(ctx) {
     if (w.relay && file.size > MAX_FILE_RELAY) return toast(t('Sin conexión directa, el límite por archivo es de 5 MB.'));
     if (!file.size) return;
     const f = { fid: crypto.randomUUID(), name: file.name || 'archivo', mime: file.type || 'application/octet-stream', size: file.size, kind: extra.voice ? 'audio' : fileKind(file.type), ...extra };
-    const local = { ...f };
+    if (onceMode && onceable(f.kind)) { f.once = true; setOnceMode(false); }
+    const local = { ...f, blob: f.once ? null : file }; // lo que yo envío «una vez» tampoco lo conservo
     addMessage(w, { mid: f.fid, mine: true, kind: 'file', file: local, ts: Date.now() });
     // Los envíos van en fila: un archivo después de otro
     w.sendQueue = w.sendQueue.then(async () => {
@@ -853,7 +926,7 @@ export function createDM(ctx) {
           await new Promise((r) => setTimeout(r, 70)); // respeta el límite de mensajes por segundo
         }
         sendJSON(w, { t: 'file-end', fid: f.fid });
-        local.url = URL.createObjectURL(file);
+        local.url = f.once ? 'sent' : URL.createObjectURL(file);
         return rerender(w, f.fid);
       }
       const dc = w.dc;
@@ -869,7 +942,7 @@ export function createDM(ctx) {
         progress(f.fid, off / file.size);
       }
       dc.send(JSON.stringify({ t: 'file-end', fid: f.fid }));
-      local.url = URL.createObjectURL(file);
+      local.url = f.once ? 'sent' : URL.createObjectURL(file);
       rerender(w, f.fid);
     }).catch((e) => sysLine(w, 'Error al enviar el archivo: ' + esc(e.message), 'err'));
   }
@@ -1220,7 +1293,8 @@ export function createDM(ctx) {
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
-    init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile, sendText, sendFile, sendSticker, startVoice, stopVoice,
+    init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile,
+    setOnceMode, isOnceMode: () => onceMode, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };

@@ -22,7 +22,7 @@ import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
 import {
   isNative, isApp, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, installUpdate, initAppEvents,
-  deviceName, initPush, initLocal, notify, clearNotifications, isForeground,
+  deviceName, initPush, initLocal, notify, clearNotifications, isForeground, shareFile, saveFile, canShareFiles,
 } from './native.js';
 
 export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
@@ -301,6 +301,13 @@ function dmContext() {
     state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
     sys, addHtml, activate, renderChanList: renderLists, updateTitle: () => {},
     photos, // foto de perfil: viaja directamente entre amigos
+    // Compartir (correo, otras apps) y guardar archivos del chat
+    canShareFiles, shareFile,
+    saveFile: async (file) => { const where = await saveFile(file); if (where) toast(t('Guardado en {lugar}.', { lugar: where })); },
+    onOnceChange: (on) => {
+      document.getElementById('once-btn')?.classList.toggle('on', on);
+      if (on) toast(t('La próxima foto, vídeo o audio se podrá ver una sola vez.'));
+    },
     myProfile: () => ({ first: state.account?.firstName, last: state.account?.lastName }),
     onPeerProfile: (w, p) => {
       const f = state.friends.get(String(w.peer.cid));
@@ -403,6 +410,7 @@ function renderShell() {
           <div class="input-wrap">
             <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
             <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
+            <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Ver una vez: la próxima foto, vídeo o audio se podrá abrir una sola vez"><span class="once-ico">1</span></button>
             <input id="input" autocomplete="off" spellcheck="true" maxlength="4000" placeholder="Escribe un mensaje…">
             <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
             <button class="send" type="submit" title="Enviar">${icon('send')}</button>
@@ -433,6 +441,17 @@ function renderShell() {
   document.getElementById('attach-btn').onclick = () => document.getElementById('file-input').click();
   document.getElementById('file-input').onchange = (e) => { const w = cur(); if (w) [...e.target.files].forEach((f) => dm.sendFile(w, f)); e.target.value = ''; };
   document.getElementById('mic-btn').onclick = () => cur() && dm.startVoice(cur());
+  document.getElementById('once-btn').onclick = () => dm.setOnceMode(!dm.isOnceMode());
+  // Pegar (Ctrl+V: capturas de pantalla, imágenes, archivos) o arrastrar archivos al chat
+  const sendFiles = (files) => { const w = cur(); if (w && files.length) files.forEach((f) => dm.sendFile(w, f)); };
+  document.getElementById('input').addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length && cur()) { e.preventDefault(); sendFiles(files); }
+  });
+  const chatEl = document.querySelector('.m-chat');
+  chatEl.addEventListener('dragover', (e) => { if (cur()) { e.preventDefault(); chatEl.classList.add('dragging'); } });
+  chatEl.addEventListener('dragleave', (e) => { if (!chatEl.contains(e.relatedTarget)) chatEl.classList.remove('dragging'); });
+  chatEl.addEventListener('drop', (e) => { chatEl.classList.remove('dragging'); if (!cur()) return; e.preventDefault(); sendFiles([...e.dataTransfer.files]); });
   document.getElementById('rec-cancel').onclick = () => dm.stopVoice(false);
   document.getElementById('rec-send').onclick = () => dm.stopVoice(true);
   const input = document.getElementById('input');
@@ -795,9 +814,10 @@ function profileSheet() {
       { label: t('Quitar foto'), icon: 'trash', danger: true, run: () => { photos.setMine(null); dm?.broadcastPhoto(); profileSheet(); } },
     ] : []),
     '-',
+    { label: t('Cambiar mi nick'), icon: 'at', hint: a.nick, run: changeNickDialog },
     { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
     { label: t('Copiar mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
-  ], `<div class="profile-card">${photos.avatar('me', a.nick)}<b class="ugc">${esc(a.nick)}</b><span class="ugc">${esc(`${a.firstName} ${a.lastName}`)}</span>
+  ], `<div class="profile-card">${photos.avatar('me', a.nick)}<b class="ugc">${esc(a.nick)}</b><small>${esc(t('Nick'))}</small><span class="ugc">${esc(`${a.firstName} ${a.lastName}`)}</span><small>${esc(t('Nombre y apellido (solo lo ven tus amigos)'))}</small>
     <small>${esc(t('Así te ven tus amigos en los privados. La foto no se guarda en ningún servidor.'))}</small></div>`);
 }
 function fontMenu() {
@@ -815,6 +835,29 @@ function wallMenu() {
 photos.onChange(() => {
   const me = document.getElementById('me-photo'); if (me) me.innerHTML = photos.avatar('me', state.nick);
   renderLists(); const w = state.windows.get(state.active); if (w) dm?.onActivate(w); });
+
+/** El nick es de la cuenta: cambia en todos tus dispositivos y les llega a tus amigos. */
+async function changeNickDialog() {
+  const a = state.account;
+  const v = await openDialog({
+    title: t('Cambiar mi nick'), text: esc(t('Es el nombre que se ve en grande. Es de tu cuenta: cambia en todos tus dispositivos.')),
+    fields: [{ name: 'nick', label: t('Nick'), value: a.nick, max: 20 }],
+    confirm: t('Guardar'),
+    validate: async ({ nick }) => {
+      const n = nick.trim();
+      if (!NICK_RE.test(n)) return esc(t('Ese nick no es válido: 2–20 caracteres, letras, números y _ - [ ] { } ^ |, sin empezar por número.'));
+      if (n.toLowerCase() === a.nick.toLowerCase()) return '';
+      const { error } = await supabase.from('profiles').update({ nick: n }).eq('id', a.id);
+      if (error) return esc(t(error.code === '23505' ? 'Ese nick ya está registrado. Elige otro.' : error.message));
+      return '';
+    },
+  });
+  if (!v) return profileSheet();
+  const n = v.nick.trim();
+  if (n !== a.nick) { a.nick = state.nick = n; dm?.onNickChange(n); dm?.broadcastProfile(); toast(t('Guardado.')); }
+  const me = document.getElementById('me-photo'); if (me) me.innerHTML = photos.avatar('me', n);
+  profileSheet();
+}
 
 async function editNameDialog() {
   const a = state.account;

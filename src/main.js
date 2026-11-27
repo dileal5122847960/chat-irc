@@ -543,6 +543,7 @@ function renderClient() {
           <button type="button" class="icon-btn action-toggle" id="action-btn" title="Escribir como acción (* tu_nick hace algo)">${icon('sparkle')}</button>
           <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
           <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
+            <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Ver una vez: la próxima foto, vídeo o audio se podrá abrir una sola vez"><span class="once-ico">1</span></button>
           <input id="input" autocomplete="off" spellcheck="true" maxlength="${MAX_MSG}" placeholder="Escribe un mensaje…">
           <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
           <button class="send" type="submit" title="Enviar">${icon('send')}</button>
@@ -613,6 +614,7 @@ function renderClient() {
     e.target.value = '';
   };
   document.getElementById('mic-btn').onclick = () => dm.startVoice(state.windows.get(state.active));
+  document.getElementById('once-btn').onclick = () => dm.setOnceMode(!dm.isOnceMode());
   document.getElementById('rec-cancel').onclick = () => dm.stopVoice(false);
   document.getElementById('rec-send').onclick = () => dm.stopVoice(true);
   // Pegar o arrastrar archivos en un privado
@@ -1402,6 +1404,10 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) fetc
 const dm = createDM({
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
   photos, // foto de perfil (solo privados): viaja directamente entre las dos personas
+  onOnceChange: (on) => {
+    document.getElementById('once-btn')?.classList.toggle('on', on);
+    if (on) toast(t('La próxima foto, vídeo o audio se podrá ver una sola vez.'));
+  },
   myProfile: () => (state.registered && state.account ? { first: state.account.firstName, last: state.account.lastName } : null),
   onPeerProfile: (w, p) => { if (w.via === 'user') friends.updateLocal(w.peer.cid, p); },
   sys, addHtml, activate: (k) => activate(k),

@@ -13,6 +13,8 @@ import { Browser } from '@capacitor/browser';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { Share } from '@capacitor/share';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 export const isNative = Capacitor.isNativePlatform();
 const desktop = typeof window !== 'undefined' ? window.chamuflacDesktop : null; // app de Windows (Electron)
@@ -152,4 +154,36 @@ export async function clearNotifications(peer) {
     if (id) await LocalNotifications.cancel({ notifications: [{ id }] });
     if (!peer && pushEnabled) await PushNotifications.removeAllDeliveredNotifications();
   } catch { /* nada */ }
+}
+
+/* ---------------- Compartir y guardar archivos del chat ---------------- */
+const toBase64 = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+const safeName = (n) => String(n || 'archivo').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 120);
+/** ¿Se puede compartir a otras apps (correo, mensajería…)? */
+export function canShareFiles() {
+  if (isNative) return true;
+  try { return !!navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.txt', { type: 'text/plain' })] }); } catch { return false; }
+}
+/** Abre el menú del sistema para enviar el archivo por correo, otra app de mensajería, Drive… */
+export async function shareFile(file) {
+  if (isNative) {
+    const w = await Filesystem.writeFile({ path: 'compartir/' + safeName(file.name), data: await toBase64(file), directory: Directory.Cache, recursive: true });
+    return Share.share({ title: file.name, files: [w.uri], dialogTitle: file.name });
+  }
+  if (canShareFiles() && navigator.canShare({ files: [file] })) return navigator.share({ files: [file], title: file.name });
+  return saveFile(file);
+}
+/** Guarda el archivo. Android: carpeta Documentos/ChamuFlac. Windows y navegador: descarga (elige dónde). */
+export async function saveFile(file) {
+  if (isNative) {
+    try {
+      await Filesystem.writeFile({ path: 'ChamuFlac/' + Date.now() + '-' + safeName(file.name), data: await toBase64(file), directory: Directory.Documents, recursive: true });
+      return 'Documentos/ChamuFlac';
+    } catch { return shareFile(file); } // sin permiso de almacenamiento: se ofrece compartir (p. ej. «Guardar en Drive/Archivos»)
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  return null;
 }
