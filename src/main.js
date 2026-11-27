@@ -12,6 +12,7 @@ import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
 import { createGroups } from './groups.js';
 import { captchaToken } from './captcha.js';
+import { createModeration } from './moderation.js';
 import { webPushState, webPushToken, webPushOff, onWebPushTap } from './webpush.js';
 import { mountAds } from './ads.js';
 import { createPolls } from './polls.js';
@@ -1033,6 +1034,10 @@ async function joinChannel(name) {
   if (!state.channels.has(key)) await loadChannels();
   const ch = state.channels.get(key);
   if (!ch) { toast(`El canal ${name} no existe.`); return activate('status'); }
+  if (!isOwner(ch, state.account?.id)) {
+    const banned = await mod.banStatus(ch, state.nick);
+    if (banned) { toast(banned); return activate('status'); }
+  }
 
   // Canal privado: el servidor comprueba la contraseña y entrega el secreto del canal
   let secret = null;
@@ -1056,6 +1061,7 @@ async function joinChannel(name) {
     m.body = m.body.slice(0, MAX_MSG);
     m.ts = Math.min(Number(m.ts) || Date.now(), Date.now());
     if (!LANGS[m.lang]) delete m.lang;
+    if (mod.drop(w, m)) return; // ignorado o inundando el chat
     addMessage(key, m);
   });
   on('topic', (t) => applyTopic(w, t));
@@ -1204,12 +1210,13 @@ async function adminsDialog(w) {
 /* ---------- Expulsar ---------- */
 function applyKick(w, k, local = false) {
   if (!local && !cidIsAdmin(w, k.byCid)) return;
+  const time = k.ban && k.label ? ` (${esc(t(k.label))})` : '';
   if (k.cid === state.clientId) {
-    partChannel(w.key, `<b>${esc(k.by)}</b> te expulsó de <b>${esc(w.name)}</b>.`);
-    toast(`Te expulsaron de ${w.name}`);
+    partChannel(w.key, k.ban ? `<b>${esc(k.by)}</b> ${esc(t('te bloqueó en'))} <b>${esc(w.name)}</b>${time}.` : `<b>${esc(k.by)}</b> te expulsó de <b>${esc(w.name)}</b>.`);
+    toast(k.ban ? t('Te bloquearon en {canal}', { canal: w.name }) : `Te expulsaron de ${w.name}`);
     return;
   }
-  sys(w.key, `<b>${esc(k.by)}</b> expulsó a <b>${esc(k.nick)}</b> del canal`, 'part');
+  sys(w.key, k.ban ? `🛡 <b>${esc(k.by)}</b> ${esc(t('bloqueó a'))} <b>${esc(k.nick)}</b>${time}` : `<b>${esc(k.by)}</b> expulsó a <b>${esc(k.nick)}</b> del canal`, 'part');
 }
 function canKick(w, p) {
   if (p.me || isOwner(w.ch, p.uid)) return false;
@@ -1249,6 +1256,11 @@ function memberMenu(anchor, cid) {
       items.push({ label: 'Quitar administrador', icon: 'shield-off', onClick: () => revokeAdmin(w, p) });
     }
     if (canKick(w, p)) items.push('-', { label: 'Expulsar del canal', icon: 'door', danger: true, onClick: () => emit(w, 'kick', { cid: p.cid, nick: p.nick }, applyKick) });
+    if (canKick(w, p) && iAmPermAdmin(w)) items.push({ label: 'Bloquear del canal…', hint: t('No podrá volver a entrar'), icon: 'ban', danger: true, onClick: () => mod.banDialog(w, p) });
+  }
+  if (!p.me) {
+    items.push('-', { label: mod.isIgnored(p) ? 'Dejar de ignorar' : 'Ignorar', hint: t('Solo en este dispositivo'), icon: 'mic-off', onClick: () => mod.toggleIgnore(w, p) });
+    items.push({ label: 'Denunciar…', icon: 'flag', onClick: () => mod.reportDialog(w, p) });
   }
   if (p.me && iAmAdmin(w) && !iAmOwner(w)) items.push({ label: 'Dejar de ser administrador', icon: 'shield-off', onClick: () => revokeAdmin(w, p) });
   if (p.me) items.push({ label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog });
@@ -1296,6 +1308,10 @@ function channelMenu(anchor) {
   items.push({ label: 'Crear encuesta', icon: 'sparkle', onClick: () => polls.create(w) });
   items.push({ label: 'Resumir lo que me perdí', icon: 'message', hint: 'Summarizer' in self ? t('Con la IA de tu navegador, sin enviar nada') : t('Necesita Chrome con IA integrada'), disabled: !('Summarizer' in self), onClick: () => summarize(w) });
   items.push({ label: 'Ver administradores', icon: 'shield', onClick: () => adminsDialog(w) });
+  if (iAmPermAdmin(w)) {
+    items.push({ label: 'Personas bloqueadas', icon: 'ban', onClick: () => mod.bansDialog(w) });
+    items.push({ label: 'Denuncias', icon: 'flag', onClick: () => mod.reportsDialog(w) });
+  }
   items.push({ label: 'Copiar enlace del canal', icon: 'link', onClick: () => navigator.clipboard?.writeText(location.origin + '/#' + w.name.slice(1)).then(() => toast('Enlace copiado')) });
   items.push({ label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) });
   items.push({ label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } });
@@ -1720,6 +1736,13 @@ const friends = createFriends({
     const b = document.getElementById('friends-badge');
     if (b) { b.textContent = n || ''; b.classList.toggle('hidden', !n); }
   },
+});
+
+/* ---------- Moderación de canales ---------- */
+const mod = createModeration({
+  supabase, t, esc, toast, openDialog, sys, registered: () => state.registered,
+  kick: (w, p, extra) => emit(w, 'kick', { cid: p.cid, nick: p.nick, ...extra }, applyKick),
+  onIgnoreChange: () => renderMembers(),
 });
 
 /* ---------- Encuestas en canales ---------- */
