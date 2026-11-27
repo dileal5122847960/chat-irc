@@ -17,6 +17,7 @@ import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
 import { mountAds } from '../ads.js';
+import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from '../profile.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
 import { APP_NAME, logoSvg, flag } from '../brand.js';
@@ -343,6 +344,7 @@ function dmContext() {
       if (isForeground()) { playTone('msg'); try { navigator.vibrate?.(25); } catch { /* nada */ } }
       else notify({ title: w.peer.nick, body: previewText(m), peer: w.peer.cid });
     },
+    noTranscribe: isNative || isDesktop, // el reconocimiento de voz del navegador no está en las apps
     onBuzz: () => { playTone('call', 'digital'); if (isDesktop) window.chamuflacDesktop?.attention(); },
     onCallRing: (w, video) => { if (!isForeground()) notify({ title: w.peer.nick, body: t(video ? 'Videollamada entrante' : 'Llamada entrante'), peer: w.peer.cid, call: true }); },
   };
@@ -414,6 +416,7 @@ function renderShell() {
           <div class="input-wrap">
             <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
             <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
+            <button type="button" class="icon-btn dm-only" id="tools-btn" title="Juegos, pizarra, ubicación y zumbido">${icon('plus')}</button>
             <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Ver una vez: la próxima foto, vídeo o audio se podrá abrir una sola vez"><span class="once-ico">1</span></button>
             <input id="input" autocomplete="off" spellcheck="true" maxlength="4000" placeholder="Escribe un mensaje…">
             <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
@@ -446,6 +449,7 @@ function renderShell() {
   document.getElementById('file-input').onchange = (e) => { const w = cur(); if (w) [...e.target.files].forEach((f) => dm.sendFile(w, f)); e.target.value = ''; };
   document.getElementById('mic-btn').onclick = () => cur() && dm.startVoice(cur());
   document.getElementById('once-btn').onclick = () => dm.setOnceMode(!dm.isOnceMode());
+  document.getElementById('tools-btn').onclick = (e) => { const w = state.windows.get(state.active); if (w?.kind === 'dm') dm.openTools(w, e.currentTarget); };
   // Pegar (Ctrl+V: capturas de pantalla, imágenes, archivos) o arrastrar archivos al chat
   const sendFiles = (files) => { const w = cur(); if (w && files.length) files.forEach((f) => dm.sendFile(w, f)); };
   document.getElementById('input').addEventListener('paste', (e) => {
@@ -534,7 +538,8 @@ function friendsHtml(incoming) {
   const blocked = all.filter((f) => f.status === 'blocked');
   const name = (f) => [f.first, f.last].filter(Boolean).join(' ');
   let html = `<div class="m-mine"><span>Tu número</span><button class="chip-btn" data-copy-number>${esc(fmtNumber(state.account.number))} ${icon('copy')}</button>
-    <button class="icon-btn sm" data-refresh title="Actualizar">${icon('refresh')}</button></div>`;
+    <button class="icon-btn sm" data-refresh title="Actualizar">${icon('refresh')}</button></div>
+    <div class="m-qr-row"><button type="button" class="btn small" data-myqr>▦ ${esc(t('Mi código QR'))}</button><button type="button" class="btn small" data-scanqr>📷 ${esc(t('Escanear QR'))}</button></div>`;
   if (incoming.length) {
     html += `<h3 class="m-sec">Solicitudes recibidas</h3>` + incoming.map((f) => `<div class="m-row static">
       <span class="m-av">${avatar(f.nick)}</span><span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small>${esc(fmtNumber(f.number))}</small></span>
@@ -572,6 +577,8 @@ async function onListClick(e) {
   if (d.fmenu) return friendMenu(b, d.fmenu);
   if ('copyNumber' in d) return copyNumber();
   if ('refresh' in d) { await loadFriends(); return toast(t('Lista actualizada.')); }
+  if ('myqr' in d) return myQrDialog();
+  if ('scanqr' in d) return scanFriend();
   const run = async (fn, args, ok) => {
     b.disabled = true;
     const { data, error } = await supabase.rpc(fn, args);
@@ -725,12 +732,27 @@ function toast(text) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
-async function addFriendDialog() {
+/** Mi código QR: escaneado con la cámara del teléfono abre ChamuFlac para agregarme. */
+function myQrDialog() {
+  openDialog({
+    title: t('Mi código QR'),
+    text: `${qrSvg(friendLink(state.account.number))}<span class="qr-num">${esc(fmtNumber(state.account.number))}</span><br>${esc(t('Pídele a tu amigo que lo escanee para agregarte.'))}`,
+    confirm: t('Aceptar'),
+  });
+}
+async function scanFriend() {
+  const text = await scanQR({ t, esc });
+  if (text === null) return;
+  const n = numberFromQr(text);
+  if (!n) return toast(t('Ese código QR no es de ChamuFlac.'));
+  addFriendDialog(n);
+}
+async function addFriendDialog(prefill) {
   let found = null;
   const v = await openDialog({
     title: t('Agregar amigo'),
     text: esc(t('Escribe el número de 8 dígitos de la otra persona. Lo ve en la app, en Amigos.')),
-    fields: [{ name: 'number', label: t('Número'), inputmode: 'numeric', max: 12, placeholder: '1234 5678' }],
+    fields: [{ name: 'number', label: t('Número'), inputmode: 'numeric', max: 12, placeholder: '1234 5678', value: prefill ? fmtNumber(prefill) : '' }],
     confirm: t('Enviar solicitud'),
     validate: async ({ number }) => {
       const n = Number(String(number).replace(/\D/g, ''));

@@ -29,7 +29,9 @@
     "@capacitor/push-notifications": "^8.1.3",
     "@capacitor/share": "^8.0.3",
     "@capacitor/splash-screen": "^8.0.2",
-    "@supabase/supabase-js": "^2.119.2"
+    "@supabase/supabase-js": "^2.119.2",
+    "jsqr": "^1.4.0",
+    "qrcode-generator": "^1.5.2"
   },
   "androidVersion": "1.0.7",
   "windowsVersion": "1.0.3"

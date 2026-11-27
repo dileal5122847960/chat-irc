@@ -7,6 +7,8 @@
  * real para esto: así se gasta lo mínimo). Al enviar una solicitud se avisa al móvil del
  * otro con la función "push".
  */
+import { qrSvg, scanQR, friendLink, numberFromQr } from './qr.js';
+
 export function createFriends(ctx) {
   const { supabase, esc, icon, avatar, t, toast, openDialog, closeOverlays, SUPABASE_URL, SUPABASE_KEY } = ctx;
   let friends = [];
@@ -66,6 +68,7 @@ export function createFriends(ctx) {
       <div class="fr-head"><h3>Amigos</h3><button type="button" class="icon-btn" data-fr-close title="Cerrar">${icon('x')}</button></div>
       <div class="fr-mine"><span>Tu número</span><button type="button" class="chip-number" data-fr-copy>${esc(fmtNumber(ctx.myNumber()))} ${icon('link')}</button>
         <button type="button" class="btn small primary" data-fr-add>${icon('plus')} Agregar amigo</button></div>
+      <div class="fr-qr"><button type="button" class="btn small" data-fr-myqr>▦ ${esc(t('Mi código QR'))}</button><button type="button" class="btn small" data-fr-scan>📷 ${esc(t('Escanear QR'))}</button></div>
       ${inc.length ? `<h4 class="fr-sec">Solicitudes recibidas</h4><ul class="fr-list">${inc.map((f) => row(f, { text: fmtNumber(f.user_number) },
         `<button class="btn small" data-fr-reject="${f.user_number}">Rechazar</button><button class="btn small primary" data-fr-accept="${f.user_number}">Aceptar</button>`)).join('')}</ul>` : ''}
       <h4 class="fr-sec">Tus amigos</h4>
@@ -85,6 +88,17 @@ export function createFriends(ctx) {
     if ('frClose' in d) return b.closest('.dialog-wrap').remove();
     if ('frCopy' in d) return navigator.clipboard?.writeText(String(ctx.myNumber())).then(() => toast(t('Número copiado')));
     if ('frAdd' in d) return addDialog();
+    if ('frMyqr' in d) {
+      const n = ctx.myNumber();
+      return openDialog({ title: t('Mi código QR'), text: `${qrSvg(friendLink(n))}<span class="qr-num">${esc(fmtNumber(n))}</span><br>${esc(t('Pídele a tu amigo que lo escanee para agregarte.'))}`, confirm: t('Aceptar') }).then(open);
+    }
+    if ('frScan' in d) {
+      const text = await scanQR({ t, esc });
+      if (text === null) return open();
+      const n = numberFromQr(text);
+      if (!n) { toast(t('Ese código QR no es de ChamuFlac.')); return open(); }
+      return addDialog(n);
+    }
     const f = friends.find((x) => String(x.user_number) === (d.frAccept || d.frReject || d.frCancel || d.frRemove || d.frBlock || d.frUnblock || d.frChat));
     if (!f) return;
     if (d.frChat) { b.closest('.dialog-wrap').remove(); return ctx.openChat(f); }
@@ -108,12 +122,12 @@ export function createFriends(ctx) {
     if (d.frUnblock) return run('block_user', { p_number: f.user_number, p_block: false });
   }
 
-  async function addDialog() {
+  async function addDialog(prefill) {
     let found = null;
     const v = await openDialog({
       title: t('Agregar amigo'),
       text: esc(t('Escribe el número de 8 dígitos de la otra persona. Lo ve en la app, en Amigos.')),
-      fields: [{ name: 'number', label: t('Número'), max: 12, placeholder: '1234 5678' }],
+      fields: [{ name: 'number', label: t('Número'), max: 12, placeholder: '1234 5678', value: prefill ? fmtNumber(prefill) : '' }],
       confirm: t('Enviar solicitud'),
       validate: async ({ number }) => {
         const n = Number(String(number).replace(/\D/g, ''));
@@ -161,5 +175,5 @@ export function createFriends(ctx) {
   }
   const nickOf = (number) => friends.find((f) => String(f.user_number) === String(number))?.nick;
 
-  return { start, stop, open, refresh, notify, isFriend, nickOf, updateLocal };
+  return { start, stop, open, refresh, notify, isFriend, nickOf, updateLocal, addDialog };
 }

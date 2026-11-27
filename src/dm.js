@@ -13,6 +13,7 @@
 import { EMOJI, STICKERS, stickerSvg } from './emoji.js';
 import { t, LANGS, getLang, translatedFrom } from './i18n.js';
 import { translate, detectLang } from './translate.js';
+import { createTools } from './dmtools.js';
 
 const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo (conexión directa)
 const MAX_FILE_RELAY = 5 * 1024 * 1024; // 5 MB por archivo (plan B a través del servidor)
@@ -293,6 +294,7 @@ export function createDM(ctx) {
     document.getElementById('attach-btn').disabled = !open;
     document.getElementById('mic-btn').disabled = !open;
     document.getElementById('emoji-btn').disabled = !writable;
+    const tb = document.getElementById('tools-btn'); if (tb) tb.disabled = !open;
     const ob = document.getElementById('once-btn');
     if (ob) { ob.disabled = !open; ob.classList.toggle('on', open && onceMode); }
   }
@@ -309,7 +311,7 @@ export function createDM(ctx) {
   // Con amigos el chat queda limpio, como en una app de mensajería: sin avisos de conexión,
   // reconexión ni errores (el estado se ve en la cabecera y en las marcas). Solo las llamadas.
   function sysLine(w, html, kind = 'info') {
-    if (w.via === 'user' && !/📞|📹|📳|⏱/.test(html)) return;
+    if (w.via === 'user' && !/📞|📹|📳|⏱|🎨/.test(html)) return;
     ctx.sys(w.key, html, kind);
   }
 
@@ -536,7 +538,7 @@ export function createDM(ctx) {
       case 'file-start': {
         if (!(m.size > 0 && m.size <= (w.relay ? MAX_FILE_RELAY : MAX_FILE))) return;
         const f = { fid: safeId(m.fid), name: String(m.name || 'archivo').slice(0, 200), mime: String(m.mime || ''), size: m.size, kind: ['image', 'video', 'audio', 'file'].includes(m.kind) ? m.kind : 'file',
-          voice: !!m.voice, once: !!m.once && ['image', 'video', 'audio'].includes(m.kind), duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
+          voice: !!m.voice, transcript: typeof m.transcript === 'string' ? m.transcript.slice(0, 2000) : '', once: !!m.once && ['image', 'video', 'audio'].includes(m.kind), duration: Number(m.duration) || 0, wave: Array.isArray(m.wave) ? m.wave.slice(0, 48).map((v) => Math.max(0.05, Math.min(1, Number(v) || 0))) : null, chunks: [], received: 0 };
         w.incoming.set('current', f);
         const msg = { mid: f.fid, mine: false, kind: 'file', file: f, ts: Date.now() };
         addMessage(w, msg); receipt(w, msg.mid);
@@ -589,6 +591,7 @@ export function createDM(ctx) {
         return;
       }
       case 'buzz': return onBuzz(w);
+      case 'tool': return tools?.onData(w, m); // ta-te-ti, pizarra, ubicación
       case 'photo': {
         if (!ctx.photos || (m.d !== null && typeof m.d !== 'string') || !ctx.photos.valid(m.d)) return;
         ctx.photos.set(photoKey(w), m.d);
@@ -896,6 +899,8 @@ export function createDM(ctx) {
       else body = `<div class="btext">${trBody(m)}<span class="meta-spacer"></span></div>`;
     } else if (m.kind === 'action') {
       body = `<div class="btext"><i>* <span class="ugc">${esc(m.mine ? state.nick : w.peer.nick)}</span> ${trBody(m)}</i><span class="meta-spacer"></span></div>`;
+    } else if (m.kind === 'tool') {
+      cls = 'tool-msg'; body = tools.bubble(w, m);
     } else if (m.kind === 'sticker') {
       cls = 'sticker-msg'; body = `<div class="sticker">${stickerSvg(m.sticker)}</div>`;
     } else {
@@ -966,7 +971,7 @@ export function createDM(ctx) {
         <span class="voice-av">${m.mine ? myAvatar() : peerAvatar(w)}<i class="mic-mini">${icon('mic')}</i></span>
         <button class="voice-play" aria-label="Reproducir" ${loading ? 'disabled' : ''}>${loading ? ring(f.fid) : icon('play')}</button>
         <span class="voice-track"><span class="wave">${bars}</span><small class="voice-time">${fmtDur(f.duration)}</small></span>
-        <button class="voice-speed" title="Velocidad">1×</button></div>${fileActions(f)}`;
+        <button class="voice-speed" title="Velocidad">1×</button></div>${f.transcript ? `<details class="voice-tx"><summary>${esc(t('Ver texto'))}</summary><span class="ugc">${esc(f.transcript)}</span></details>` : ''}${fileActions(f)}`;
     }
     if (f.kind === 'image' || f.kind === 'video') {
       const inner = loading ? `<div class="media-ph">${icon(f.kind === 'image' ? 'image' : 'video')}${ring(f.fid)}</div>`
@@ -1216,8 +1221,20 @@ export function createDM(ctx) {
     const actx = new (window.AudioContext || window.webkitAudioContext)();
     const an = actx.createAnalyser(); an.fftSize = 512;
     actx.createMediaStreamSource(stream).connect(an);
-    const r = { mr, stream, actx, an, chunks: [], levels: [], start: Date.now(), w };
+    const r = { mr, stream, actx, an, chunks: [], levels: [], start: Date.now(), w, text: '' };
     rec = r;
+    // Transcripción mientras se graba (si el navegador lo permite; en Chrome usa su servicio de voz)
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR && !ctx.noTranscribe) {
+      try {
+        const sr = new SR();
+        sr.lang = { es: 'es-AR', en: 'en-US', pt: 'pt-BR', fr: 'fr-FR', it: 'it-IT' }[getLang()] || 'es-AR';
+        sr.continuous = true; sr.interimResults = false;
+        sr.onresult = (e) => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) r.text += (r.text ? ' ' : '') + e.results[i][0].transcript.trim(); };
+        sr.onerror = () => {}; sr.onend = () => { if (rec === r) try { sr.start(); } catch { /* nada */ } };
+        sr.start(); r.sr = sr;
+      } catch { /* sin reconocimiento de voz */ }
+    }
     mr.ondataavailable = (e) => e.data.size && r.chunks.push(e.data);
     mr.start(250);
     document.getElementById('input-form').classList.add('recording');
@@ -1246,6 +1263,7 @@ export function createDM(ctx) {
     if (!r) return;
     rec = null;
     cancelAnimationFrame(r.raf);
+    try { r.sr?.stop(); } catch { /* nada */ }
     document.getElementById('input-form').classList.remove('recording');
     r.mr.onstop = () => {
       r.stream.getTracks().forEach((t) => t.stop());
@@ -1260,7 +1278,8 @@ export function createDM(ctx) {
         const seg = r.levels.slice(Math.floor(i * step), Math.floor((i + 1) * step) || Math.floor(i * step) + 1);
         return Math.round(Math.max(0.08, ...seg) * 100) / 100;
       });
-      sendFile(r.w, new File(r.chunks, `nota-de-voz.${ext}`, { type }), { voice: true, duration, wave });
+      const finish = () => sendFile(r.w, new File(r.chunks, `nota-de-voz.${ext}`, { type }), { voice: true, duration, wave, ...(r.text ? { transcript: r.text.slice(0, 2000) } : {}) });
+      if (r.sr) setTimeout(finish, 700); else finish(); // espera el último trozo del texto
     };
     r.mr.stop();
   }
@@ -1395,6 +1414,7 @@ export function createDM(ctx) {
     clearInterval(c.timer);
     clearInterval(c.voiceTimer);
     c.stream?.getTracks().forEach((t) => t.stop());
+    if (c.screen) { c.screen.onended = null; c.screen.stop(); }
     w.audioTx?.sender.replaceTrack(null);
     w.videoTx?.sender.replaceTrack(null);
     w.call = null;
@@ -1414,7 +1434,7 @@ export function createDM(ctx) {
       <video class="local-video hidden" autoplay playsinline muted></video>
       <div class="call-controls">${incoming
         ? `<button class="round red" data-call="reject" title="Rechazar">${icon('phone-off')}</button><button class="round green" data-call="accept" title="Contestar">${icon(w.call.video ? 'video' : 'phone')}</button>`
-        : `<button class="round" data-call="mic" title="Micrófono">${icon('mic')}</button><button class="round" data-call="cam" title="Cámara">${icon('video')}</button><button class="round red" data-call="hangup" title="Colgar">${icon('phone-off')}</button>`}</div>
+        : `<button class="round" data-call="mic" title="Micrófono">${icon('mic')}</button><button class="round" data-call="cam" title="Cámara">${icon('video')}</button>${canShareScreen() ? `<button class="round" data-call="screen" title="Compartir pantalla">${icon('expand')}</button>` : ''}<button class="round red" data-call="hangup" title="Colgar">${icon('phone-off')}</button>`}</div>
       <button class="unmute-btn hidden" data-call="unmute">🔊 <span>Tocar para activar el sonido</span></button>
       <p class="call-e2e">${icon('lock')} Conexión directa cifrada de extremo a extremo</p>`;
     document.body.appendChild(el);
@@ -1431,8 +1451,39 @@ export function createDM(ctx) {
       if (a === 'full') { el.classList.toggle('full'); el.querySelector('[data-call="full"]').innerHTML = icon(el.classList.contains('full') ? 'shrink' : 'expand'); return; }
       if (a === 'mic') { w.call.micOn = !w.call.micOn; w.call.stream.getAudioTracks().forEach((t) => (t.enabled = w.call.micOn)); renderCallUI(w); }
       if (a === 'cam') toggleCam(w);
+      if (a === 'screen') toggleScreen(w);
     };
     renderCallUI(w);
+  }
+  const canShareScreen = () => !!navigator.mediaDevices?.getDisplayMedia && !/Android|iPhone|iPad/.test(navigator.userAgent);
+  /** Compartir pantalla: reemplaza la cámara por la pantalla mientras dura (y vuelve a la cámara al terminar). */
+  async function toggleScreen(w) {
+    const c = w.call;
+    if (!c) return;
+    if (c.screen) {
+      const tr = c.screen; c.screen = null;
+      tr.onended = null; tr.stop();
+      const cam = c.camOn ? c.stream.getVideoTracks()[0] : null;
+      w.videoTx?.sender.replaceTrack(cam || null);
+      const lv = document.querySelector('.call-overlay .local-video');
+      if (lv) { lv.srcObject = c.stream; lv.classList.toggle('hidden', !c.camOn); }
+      sendJSON(w, { t: 'cam', on: !!c.camOn });
+      return renderCallUI(w);
+    }
+    try {
+      const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false });
+      const tr = s.getVideoTracks()[0];
+      if (!tr || !w.call) return s.getTracks().forEach((x) => x.stop());
+      tr.contentHint = 'detail';
+      c.screen = tr;
+      tr.onended = () => { if (c.screen === tr) toggleScreen(w); }; // «Dejar de compartir» del sistema
+      await w.videoTx?.sender.replaceTrack(tr);
+      const lv = document.querySelector('.call-overlay .local-video');
+      if (lv) { lv.srcObject = new MediaStream([tr]); lv.classList.remove('hidden'); }
+      sendJSON(w, { t: 'cam', on: true });
+      sysLine(w, `📹 ${esc(t('Estás compartiendo tu pantalla.'))}`);
+      renderCallUI(w);
+    } catch { /* la persona canceló */ }
   }
   async function toggleCam(w) {
     const c = w.call;
@@ -1492,6 +1543,7 @@ export function createDM(ctx) {
     if (mic) { mic.innerHTML = icon(c.micOn ? 'mic' : 'mic-off'); mic.classList.toggle('off', !c.micOn); }
     const cam = el.querySelector('[data-call="cam"]');
     if (cam) { cam.innerHTML = icon(c.camOn ? 'video' : 'video-off'); cam.classList.toggle('off', !c.camOn); }
+    el.querySelector('[data-call="screen"]')?.classList.toggle('on', !!c.screen);
   }
 
   /* ---------------- Cierre ---------------- */
@@ -1549,7 +1601,9 @@ export function createDM(ctx) {
   };
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
+  const tools = createTools({ state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast, sendBuzz });
   return {
+    openTools: (w, anchor) => tools.openMenu(w, anchor),
     init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile,
     setOnceMode, isOnceMode: () => onceMode,
     setReply, openSearch, setTtl, ttlOf: (w) => w.ttl || 0, ttlLabel, sendBuzz, securityCode, sendText, sendFile, sendSticker, startVoice, stopVoice,

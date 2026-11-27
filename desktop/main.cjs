@@ -11,7 +11,7 @@
  * • Actualización: la app consulta app_versions; si hay versión nueva, descarga el instalador
  *   y lo ejecuta en silencio; al terminar, ChamuFlac se abre de nuevo.
  */
-const { app, BrowserWindow, Tray, Menu, shell, ipcMain, protocol, net, session, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, ipcMain, protocol, net, session, nativeImage, desktopCapturer } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -126,6 +126,10 @@ app.whenReady().then(() => {
   });
   session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => origin?.startsWith(ORIGIN) && ['media', 'notifications', 'clipboard-sanitized-write'].includes(perm));
 
+  // Compartir pantalla en llamadas: se comparte la pantalla principal
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => callback(sources[0] ? { video: sources[0] } : {})).catch(() => callback({}));
+  });
   ipcMain.handle('chamuflac:open-external', (_e, url) => { if (/^https:\/\//.test(url)) return shell.openExternal(url); });
   ipcMain.handle('chamuflac:focus', () => show());
   ipcMain.handle('chamuflac:attention', () => { if (win && !win.isFocused()) win.flashFrame(true); });
