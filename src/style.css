@@ -848,3 +848,22 @@ button.once:hover { border-color: var(--dm-accent); }
 .m-chat.dragging::after { content: ''; position: absolute; inset: 0; background: rgba(225, 29, 72, .12); border: 2px dashed var(--accent); pointer-events: none; }
 .m-chat { position: relative; }
 .bmedia .fact { z-index: 3; }
+/* Actitud */
+.attitude { font-style: italic; color: var(--accent-2) !important; opacity: .9; }
+.attitude.big { font-size: .92rem; margin-top: 4px; max-width: 280px; }
+/* ===== Banner de publicidad (carrusel) ===== */
+.ad-carousel { position: relative; overflow: hidden; border-radius: 12px; margin: 8px; min-height: 64px; box-shadow: 0 2px 10px rgba(0, 0, 0, .15); flex: none; touch-action: pan-y; user-select: none; }
+.ad-track { display: flex; transition: transform .45s ease; }
+.ad-slide { flex: 0 0 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px 16px; color: #fff; min-height: 64px; }
+.ad-icon { font-size: 1.6rem; line-height: 1; flex: none; width: 34px; text-align: center; }
+.ad-text { flex: 1; min-width: 0; }
+.ad-text b, .ad-text small { display: block; }
+.ad-text b { font-size: .9rem; }
+.ad-text small { font-size: .76rem; opacity: .92; line-height: 1.3; }
+.ad-cta { flex: none; background: #fff; color: #1a1a1a; font-weight: 700; font-size: .78rem; padding: 6px 12px; border-radius: 999px; }
+.ad-dots { position: absolute; left: 0; right: 0; bottom: 5px; display: flex; justify-content: center; gap: 5px; }
+.ad-dots button { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, .45); padding: 0; }
+.ad-dots button.on { background: #fff; width: 14px; border-radius: 3px; }
+.ad-label { position: absolute; top: 4px; right: 8px; font-size: .58rem; color: rgba(255, 255, 255, .75); text-transform: uppercase; letter-spacing: .05em; }
+.sidebar .ad-carousel .ad-slide { display: grid; grid-template-columns: 34px 1fr; align-items: center; column-gap: 10px; row-gap: 6px; padding-top: 14px; }
+.sidebar .ad-carousel .ad-cta { grid-column: 2; justify-self: start; }

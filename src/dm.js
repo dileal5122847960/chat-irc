@@ -113,7 +113,7 @@ export function createDM(ctx) {
   function sendProfile(w) {
     const p = w.via === 'user' && ctx.myProfile?.();
     if (!p || !(w.dc?.readyState === 'open' || w.relay)) return;
-    sendJSON(w, { t: 'profile', nick: state.nick, first: p.first || '', last: p.last || '' });
+    sendJSON(w, { t: 'profile', nick: state.nick, first: p.first || '', last: p.last || '', attitude: p.attitude || '' });
   }
   function broadcastProfile() { for (const w of state.windows.values()) if (w.kind === 'dm' && w.status === 'open') { sendProfile(w); sendJSON(w, { t: 'nick', nick: state.nick }); } }
   // «Ver una vez»: el próximo archivo (foto, vídeo o audio) solo se podrá abrir una vez
@@ -564,6 +564,7 @@ export function createDM(ctx) {
       case 'profile': {
         if (w.via !== 'user') return; // nombre y apellido: solo entre amigos
         const p = { nick: String(m.nick || w.peer.nick).slice(0, 20), first: String(m.first || '').slice(0, 60), last: String(m.last || '').slice(0, 60) };
+        if (typeof m.attitude === 'string') p.attitude = m.attitude.slice(0, 140);
         if (p.nick !== w.peer.nick) { w.peer.nick = w.name = p.nick; if (state.active === w.key) renderHeader(w); }
         ctx.onPeerProfile?.(w, p);
         ctx.renderChanList();

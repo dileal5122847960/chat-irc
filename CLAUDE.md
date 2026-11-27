@@ -172,6 +172,13 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   vez en un visor sin guardar ni compartir; al cerrar (o terminar el audio) se borra y se envía `viewed` → «Abierta».
   Quien la envía tampoco conserva la imagen. (No impide capturas de pantalla.)
 - El **nick** también se cambia desde Mi perfil en la app (es de la cuenta: cambia en todos los dispositivos).
+- **Publicidad** (`src/ads.js`): carrusel en la portada de la app y en la barra lateral de la web. Hoy anuncia ChamuFlac
+  (descargas — enlaces de `app_versions` —, invitar amigos, consejos); cada app oculta su propio anuncio. Para anuncios
+  reales, cambiar solo `getSlides()`.
+- **Actitud** (migración 0013): frase de hasta 140 caracteres en `user_private.attitude`, solo para amigos
+  (`set_my_attitude`, `list_friends` y `my_account` la devuelven); también viaja en el mensaje `profile` (al instante).
+- **Tonos** (`TONES`/`sounds`/`playTone` en `src/common.js`): tono de mensajes y de llamadas elegibles (generados con
+  WebAudio, sin archivos). Con la app de Android cerrada suena el tono de notificación del sistema.
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).

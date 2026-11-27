@@ -5,10 +5,12 @@ import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate, transl
 import { translate, detectLang } from './translate.js';
 import { APP_NAME, logoSvg, flag } from './brand.js';
 import { createGroupCall } from './groupcall.js';
-import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw, beep, loopTone } from './common.js';
+import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw, loopTone, playTone, sounds, TONES } from './common.js';
+const beep = () => playTone('msg'); // tono de mensaje elegido
 import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
+import { mountAds } from './ads.js';
 import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from './profile.js';
 
 setLang(initialLang());
@@ -81,7 +83,7 @@ async function loadAccount(user) {
   const { data } = await supabase.rpc('my_account');
   const profile = Array.isArray(data) ? data[0] : data;
   if (profile?.nick) {
-    state.account = { id: user.id, user, nick: profile.nick, email: user.email, number: profile.user_number, firstName: profile.first_name || '', lastName: profile.last_name || '' };
+    state.account = { id: user.id, user, nick: profile.nick, email: user.email, number: profile.user_number, firstName: profile.first_name || '', lastName: profile.last_name || '', attitude: profile.attitude || '' };
     state.pendingUser = null;
     return true;
   }
@@ -506,6 +508,7 @@ function renderClient() {
         <button class="icon-btn mobile-only" id="close-side" title="Cerrar">${icon('x')}</button></header>
       <div class="side-section">
         <nav id="nav-browse"></nav>
+        <div id="ad-slot"></div>
         <div class="side-label spaced">Tus canales</div>
         <nav id="chan-list"></nav>
         <div class="side-label spaced" id="dm-label">Privados</div>
@@ -637,6 +640,10 @@ function renderClient() {
   dm.init();
   renderChanList();
   trackLobby();
+  mountAds(document.getElementById('ad-slot'), {
+    supabase, platform: 'web', t, esc, open: (u) => window.open(u, '_blank', 'noopener'),
+    number: () => (state.registered ? state.account?.number : null), invite: inviteFriends,
+  });
 }
 
 /** Si se estaba viendo el final de la conversación, sigue pegado abajo aunque cambie el tamaño
@@ -1259,6 +1266,7 @@ function userMenu(anchor) {
   if (acc) items.push({ label: 'Nombre y apellido', hint: acc.firstName ? `${acc.firstName} ${acc.lastName}` : '', icon: 'users', onClick: editNameDialog });
   items.push(
     { label: 'Mi perfil', lead: photos.avatar('me', state.nick), hint: acc ? `${acc.firstName} ${acc.lastName}` : t(photos.mine() ? 'La ven en tus privados' : 'Sin foto'), onClick: () => profileMenu(anchor) },
+    { label: 'Sonidos', icon: 'phone', hint: `${t(TONES.msg[sounds.get('msg')].label)} · ${t(TONES.call[sounds.get('call')].label)}`, onClick: () => soundsMenu(anchor) },
     { label: 'Tamaño de letra', icon: 'edit', hint: t(FONT_LABELS[display.font()]), onClick: () => fontMenu(anchor) },
     { label: 'Fondo del chat', icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), onClick: () => wallMenu(anchor) },
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
@@ -1293,9 +1301,33 @@ function profileMenu(anchor) {
       { label: 'Quitar foto', icon: 'trash', danger: true, onClick: () => { photos.setMine(null); dm.broadcastPhoto(); } },
     ] : []),
     '-',
-    ...(acc ? [{ label: 'Nombre y apellido', icon: 'users', hint: `${acc.firstName} ${acc.lastName}`, onClick: editNameDialog }] : []),
+    ...(acc ? [
+      { label: 'Actitud', icon: 'sparkle', hint: acc.attitude || t('Escribe una frase para tus amigos'), onClick: attitudeDialog },
+      { label: 'Nombre y apellido', icon: 'users', hint: `${acc.firstName} ${acc.lastName}`, onClick: editNameDialog },
+    ] : []),
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
-  ], { title: `<div class="profile-card">${photos.avatar('me', state.nick)}<b class="ugc">${esc(state.nick)}</b>${acc ? `<span class="ugc">${esc(`${acc.firstName} ${acc.lastName}`)}</span>` : ''}<small>${esc(t('Solo se ve en los privados. No se guarda en ningún servidor.'))}</small></div>` });
+  ], { title: `<div class="profile-card">${photos.avatar('me', state.nick)}<b class="ugc">${esc(state.nick)}</b>${acc ? `<span class="ugc">${esc(`${acc.firstName} ${acc.lastName}`)}</span>${acc.attitude ? `<span class="attitude big ugc">“${esc(acc.attitude)}”</span>` : ''}` : ''}<small>${esc(t('Solo se ve en los privados. No se guarda en ningún servidor.'))}</small></div>` });
+}
+/** Invitar amigos: texto con mi número y el enlace de ChamuFlac. */
+async function inviteFriends() {
+  const n = String(state.account?.number || '').replace(/(\d{4})(\d{4})/, '$1 $2');
+  const text = t('¡Hablemos por ChamuFlac! Mi número es {n}. Descárgala o entra desde el navegador: {url}', { n, url: 'https://chat-irc.vercel.app' });
+  try { if (navigator.share) return await navigator.share({ text }); } catch { return; }
+  navigator.clipboard?.writeText(text).then(() => toast(t('Invitación copiada: pégala donde quieras.')));
+}
+
+/* ---------- Tonos de mensaje y de llamada ---------- */
+function soundsMenu(anchor) {
+  openMenu(anchor, [
+    { label: 'Tono de mensajes', icon: 'message', hint: t(TONES.msg[sounds.get('msg')].label), onClick: () => toneMenu(anchor, 'msg') },
+    { label: 'Tono de llamadas', icon: 'phone', hint: t(TONES.call[sounds.get('call')].label), onClick: () => toneMenu(anchor, 'call') },
+  ], { title: esc(t('Sonidos')) });
+}
+function toneMenu(anchor, kind) {
+  openMenu(anchor, Object.keys(TONES[kind]).map((id) => ({
+    label: TONES[kind][id].label, chosen: sounds.get(kind) === id, icon: id === 'silencio' ? 'mic-off' : 'play',
+    onClick: () => { sounds.set(kind, id); playTone(kind, id); setTimeout(() => toneMenu(anchor, kind), 150); },
+  })), { title: esc(t(kind === 'msg' ? 'Tono de mensajes' : 'Tono de llamadas')) });
 }
 function fontMenu(anchor) {
   openMenu(anchor, Object.keys(FONT_SIZES).map((k) => ({ label: FONT_LABELS[k], chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, onClick: () => display.setFont(k) })), { title: esc(t('Tamaño de letra')) });
@@ -1310,6 +1342,22 @@ function wallMenu(anchor) {
   ], { title: esc(t('Fondo del chat')) });
 }
 photos.onChange(() => { if (document.getElementById('me-avatar')) updateMe(); renderChanList(); const w = state.windows.get(state.active); if (w?.kind === 'dm') dm.onActivate(w); });
+
+/** Actitud: una frase que ven tus amigos (aunque no estés conectado). */
+async function attitudeDialog() {
+  const acc = state.account;
+  const v = await openDialog({
+    title: 'Actitud', text: esc(t('Una frase que verán tus amigos debajo de tu nombre. Déjala vacía para quitarla.')),
+    fields: [{ name: 'attitude', label: 'Tu actitud', value: acc.attitude || '', max: 140, placeholder: '¿Cuál es tu actitud hoy?' }],
+    confirm: 'Guardar',
+  });
+  if (!v) return;
+  const { error } = await supabase.rpc('set_my_attitude', { p_text: v.attitude });
+  if (error) return toast(t(error.message));
+  acc.attitude = v.attitude.trim();
+  dm.broadcastProfile();
+  toast(t('Guardado.'));
+}
 
 async function editNameDialog() {
   const acc = state.account;
@@ -1408,7 +1456,7 @@ const dm = createDM({
     document.getElementById('once-btn')?.classList.toggle('on', on);
     if (on) toast(t('La próxima foto, vídeo o audio se podrá ver una sola vez.'));
   },
-  myProfile: () => (state.registered && state.account ? { first: state.account.firstName, last: state.account.lastName } : null),
+  myProfile: () => (state.registered && state.account ? { first: state.account.firstName, last: state.account.lastName, attitude: state.account.attitude } : null),
   onPeerProfile: (w, p) => { if (w.via === 'user') friends.updateLocal(w.peer.cid, p); },
   sys, addHtml, activate: (k) => activate(k),
   findPerson: (nick) => {
@@ -1558,7 +1606,7 @@ const gc = createGroupCall({ state, esc, icon, avatar, toast, t, ensureIce: () =
 
 /* ---------- Amigos (cuentas registradas) ---------- */
 const friends = createFriends({
-  supabase, esc, icon, avatar, t, toast, openDialog, closeOverlays, beep, SUPABASE_URL, SUPABASE_KEY,
+  supabase, esc, icon, avatar, t, toast, openDialog, closeOverlays, beep, SUPABASE_URL, SUPABASE_KEY, photos,
   myNumber: () => state.account?.number,
   openChat: (f) => dm.requestPrivate({ cid: String(f.user_number), nick: f.nick, reg: true, via: 'user' }),
   onCount: (n) => {

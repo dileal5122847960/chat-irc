@@ -103,9 +103,54 @@ export function beep(freqs = [880, 1320], dur = 0.12, vol = 0.08) {
     });
   } catch { /* sin audio */ }
 }
+/* ---------- Tonos de mensaje y de llamada (se generan aquí, sin archivos) ---------- */
+// notes: [frecuencia, inicio (s), duración (s)]. every: cada cuánto se repite (llamadas).
+export const TONES = {
+  msg: {
+    clasico: { label: 'Clásico', type: 'sine', vol: 0.08, notes: [[880, 0, 0.12], [1320, 0.12, 0.12]] },
+    chamuflac: { label: 'ChamuFlac', type: 'triangle', vol: 0.09, notes: [[659, 0, 0.1], [784, 0.1, 0.1], [1047, 0.2, 0.22]] },
+    gota: { label: 'Gota', type: 'sine', vol: 0.12, slide: true, notes: [[1400, 0, 0.09], [620, 0.07, 0.14]] },
+    campanita: { label: 'Campanita', type: 'triangle', vol: 0.07, notes: [[1568, 0, 0.6], [2093, 0.09, 0.6]] },
+    pop: { label: 'Pop', type: 'square', vol: 0.035, notes: [[520, 0, 0.06], [780, 0.07, 0.08]] },
+    silencio: { label: 'Silencio', notes: [] },
+  },
+  call: {
+    clasico: { label: 'Clásico', type: 'sine', vol: 0.12, every: 2200, notes: [[660, 0, 0.18], [880, 0.18, 0.18], [660, 0.36, 0.18], [880, 0.54, 0.18]] },
+    marimba: { label: 'Marimba', type: 'triangle', vol: 0.15, every: 2000, notes: [[523, 0, 0.28], [659, 0.15, 0.28], [784, 0.3, 0.28], [1047, 0.45, 0.45], [784, 0.75, 0.3]] },
+    digital: { label: 'Digital', type: 'square', vol: 0.045, every: 1800, notes: [[1000, 0, 0.08], [1000, 0.12, 0.08], [1000, 0.24, 0.08], [1300, 0.5, 0.08], [1300, 0.62, 0.08], [1300, 0.74, 0.08]] },
+    suave: { label: 'Suave', type: 'sine', vol: 0.11, every: 2800, notes: [[440, 0, 0.7], [554, 0.3, 0.7], [659, 0.6, 0.9]] },
+    retro: { label: 'Teléfono antiguo', type: 'sine', vol: 0.08, every: 3000, notes: Array.from({ length: 16 }, (_, i) => [i % 2 ? 480 : 440, i * 0.06, 0.06]) },
+    silencio: { label: 'Silencio', every: 3000, notes: [] },
+  },
+};
+const tonePref = (kind) => { try { return localStorage.getItem('tone:' + kind) || ''; } catch { return ''; } };
+export const sounds = {
+  get: (kind) => (TONES[kind][tonePref(kind)] ? tonePref(kind) : kind === 'msg' ? 'chamuflac' : 'clasico'),
+  set(kind, id) { try { localStorage.setItem('tone:' + kind, id); } catch { /* nada */ } },
+};
+function playNotes(tone) {
+  if (!tone?.notes?.length) return;
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    tone.notes.forEach(([f, start, dur], i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = tone.type || 'sine';
+      const t0 = now + start;
+      o.frequency.setValueAtTime(f, t0);
+      if (tone.slide && tone.notes[i + 1]) o.frequency.exponentialRampToValueAtTime(tone.notes[i + 1][0], t0 + dur);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(tone.vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(audioCtx.destination); o.start(t0); o.stop(t0 + dur + 0.03);
+    });
+  } catch { /* sin audio */ }
+}
+/** Suena el tono elegido (o el indicado, para escucharlo antes de elegirlo). */
+export function playTone(kind, id) { playNotes(TONES[kind][id || sounds.get(kind)]); }
 export function loopTone(kind) {
-  const play = () => (kind === 'ring' ? beep([660, 880, 660, 880], 0.18, 0.12) : beep([440, 480], 0.6, 0.05));
-  play();
-  const t = setInterval(play, kind === 'ring' ? 2200 : 3000);
+  // 'ring': llamada entrante (tono elegido) · 'back': quien llama oye que está sonando
+  const tone = kind === 'ring' ? TONES.call[sounds.get('call')] : { type: 'sine', vol: 0.05, every: 3000, notes: [[440, 0, 0.6], [480, 0, 0.6]] };
+  playNotes(tone);
+  const t = setInterval(() => playNotes(tone), tone.every || 3000);
   return () => clearInterval(t);
 }

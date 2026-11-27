@@ -16,10 +16,11 @@ import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
+import { mountAds } from '../ads.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from '../profile.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
 import { APP_NAME, logoSvg, flag } from '../brand.js';
-import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
+import { esc, icon, verified, nickStyle, avatar, time, linkify, loopTone, playTone, sounds, TONES } from '../common.js';
 import {
   isNative, isApp, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, installUpdate, initAppEvents,
   deviceName, initPush, initLocal, notify, clearNotifications, isForeground, shareFile, saveFile, canShareFiles,
@@ -260,7 +261,7 @@ async function afterLogin(user) {
   }
   const p = Array.isArray(data) ? data[0] : data;
   if (!p?.nick) { state.account = null; pendingUser = user; return renderAuth('setup'); }
-  state.account = { id: user.id, email: user.email, nick: p.nick, number: p.user_number, firstName: p.first_name || '', lastName: p.last_name || '' };
+  state.account = { id: user.id, email: user.email, nick: p.nick, number: p.user_number, firstName: p.first_name || '', lastName: p.last_name || '', attitude: p.attitude || '' };
   if (!state.account.firstName || !state.account.lastName) return renderAuth('setup');
   pendingUser = null;
   enterApp();
@@ -298,7 +299,8 @@ function enterApp() {
 
 function dmContext() {
   return {
-    state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
+    state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, loopTone,
+    beep: () => playTone('msg'),
     sys, addHtml, activate, renderChanList: renderLists, updateTitle: () => {},
     photos, // foto de perfil: viaja directamente entre amigos
     // Compartir (correo, otras apps) y guardar archivos del chat
@@ -308,10 +310,10 @@ function dmContext() {
       document.getElementById('once-btn')?.classList.toggle('on', on);
       if (on) toast(t('La próxima foto, vídeo o audio se podrá ver una sola vez.'));
     },
-    myProfile: () => ({ first: state.account?.firstName, last: state.account?.lastName }),
+    myProfile: () => ({ first: state.account?.firstName, last: state.account?.lastName, attitude: state.account?.attitude }),
     onPeerProfile: (w, p) => {
       const f = state.friends.get(String(w.peer.cid));
-      if (f) { if (p.nick) f.nick = p.nick; if (p.first !== undefined) { f.first = p.first; f.last = p.last; } }
+      if (f) { if (p.nick) f.nick = p.nick; if (p.first !== undefined) { f.first = p.first; f.last = p.last; } if (p.attitude !== undefined) f.attitude = p.attitude; }
       renderLists();
     },
     ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY),
@@ -335,10 +337,10 @@ function dmContext() {
     nickOf: (number) => state.friends.get(String(number))?.nick,
     // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
     onRequestSent: (peer, w) => { if (w.autoCall !== undefined) sendPush(peer.cid, 'call', w.id, !!w.autoCall); },
-    onBackgroundOpen: (w) => { renderLists(); if (isForeground()) beep(); },
+    onBackgroundOpen: (w) => { renderLists(); if (isForeground()) playTone('msg'); },
     onIncoming: (w, m) => {
       if (isForeground() && state.active === w.key) return;
-      if (isForeground()) beep([660, 990], 0.08, 0.06);
+      if (isForeground()) playTone('msg');
       else notify({ title: w.peer.nick, body: previewText(m), peer: w.peer.cid });
     },
     onCallRing: (w, video) => { if (!isForeground()) notify({ title: w.peer.nick, body: t(video ? 'Videollamada entrante' : 'Llamada entrante'), peer: w.peer.cid, call: true }); },
@@ -388,6 +390,7 @@ function renderShell() {
         <button class="icon-btn" id="menu-btn" title="Opciones">${icon('dots')}</button>
       </header>
       <div class="update-strip hidden" id="update-strip"></div>
+      <div id="ad-slot"></div>
       <nav class="m-tabs" id="m-tabs">
         <button data-tab="chats">Chats<span class="badge" id="badge-chats"></span></button>
         <button data-tab="friends">Amigos<span class="badge" id="badge-friends"></span></button>
@@ -468,6 +471,7 @@ function renderShell() {
   };
   renderUpdateStrip();
   setTab(state.tab);
+  mountAds(document.getElementById('ad-slot'), { supabase, platform, t, esc, open: openExternal, number: () => state.account?.number, invite: inviteFriends });
 }
 /** Si se estaba viendo el final de la conversación, sigue pegado abajo aunque cambie el tamaño
  *  (al abrirse el teclado del móvil, al cargar una foto…): lo último nunca queda tapado. */
@@ -538,7 +542,7 @@ function friendsHtml(incoming) {
   html += `<h3 class="m-sec">Amigos</h3>`;
   html += friends.length ? friends.map((f) => `<div class="m-row friend" data-friend="${f.number}">
       <button class="m-row-open" data-chat="${f.number}"><span class="m-av">${photos.avatar('u:' + f.number, f.nick)}</span>
-      <span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small class="ugc">${esc(name(f))}</small></span></button>
+      <span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small class="ugc">${esc(name(f))}</small>${f.attitude ? `<small class="attitude ugc">“${esc(f.attitude)}”</small>` : ''}</span></button>
       <button class="icon-btn" data-call="${f.number}" title="Llamada de voz">${icon('phone')}</button>
       <button class="icon-btn" data-vcall="${f.number}" title="Videollamada">${icon('video')}</button>
       <button class="icon-btn" data-fmenu="${f.number}" title="Opciones">${icon('dots')}</button></div>`).join('')
@@ -600,7 +604,7 @@ async function loadFriends() {
   const { data, error } = await supabase.rpc('list_friends');
   if (error) return;
   state.friends = new Map((data || []).map((f) => [String(f.user_number), {
-    number: f.user_number, nick: f.nick, first: f.first_name || '', last: f.last_name || '', status: f.status, byMe: !!f.requested_by_me,
+    number: f.user_number, nick: f.nick, first: f.first_name || '', last: f.last_name || '', status: f.status, byMe: !!f.requested_by_me, attitude: f.attitude || '',
   }]));
   renderLists();
 }
@@ -781,6 +785,7 @@ function accountMenu(anchor) {
   const a = state.account;
   openMenu(anchor, [
     { label: t('Mi perfil'), lead: photos.avatar('me', a.nick), hint: `${a.firstName} ${a.lastName} · ${fmtNumber(a.number)}`, run: profileSheet },
+    { label: t('Sonidos'), icon: 'phone', hint: `${t(TONES.msg[sounds.get('msg')].label)} · ${t(TONES.call[sounds.get('call')].label)}`, run: soundsMenu },
     { label: t('Tamaño de letra'), icon: 'edit', hint: t(FONT_LABELS[display.font()]), run: fontMenu },
     { label: t('Fondo del chat'), icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), run: wallMenu },
     { label: t('Idioma'), icon: 'globe', hint: LANGS[getLang()], run: () => languageMenu(() => renderLists()) },
@@ -814,11 +819,26 @@ function profileSheet() {
       { label: t('Quitar foto'), icon: 'trash', danger: true, run: () => { photos.setMine(null); dm?.broadcastPhoto(); profileSheet(); } },
     ] : []),
     '-',
+    { label: t('Actitud'), icon: 'sparkle', hint: a.attitude || t('Escribe una frase para tus amigos'), run: attitudeDialog },
     { label: t('Cambiar mi nick'), icon: 'at', hint: a.nick, run: changeNickDialog },
     { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
     { label: t('Copiar mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
-  ], `<div class="profile-card">${photos.avatar('me', a.nick)}<b class="ugc">${esc(a.nick)}</b><small>${esc(t('Nick'))}</small><span class="ugc">${esc(`${a.firstName} ${a.lastName}`)}</span><small>${esc(t('Nombre y apellido (solo lo ven tus amigos)'))}</small>
+  ], `<div class="profile-card">${photos.avatar('me', a.nick)}<b class="ugc">${esc(a.nick)}</b><small>${esc(t('Nick'))}</small><span class="ugc">${esc(`${a.firstName} ${a.lastName}`)}</span><small>${esc(t('Nombre y apellido (solo lo ven tus amigos)'))}</small>${a.attitude ? `<span class="attitude big ugc">“${esc(a.attitude)}”</span>` : ''}
     <small>${esc(t('Así te ven tus amigos en los privados. La foto no se guarda en ningún servidor.'))}</small></div>`);
+}
+/* ---------- Tonos de mensaje y de llamada ---------- */
+function soundsMenu() {
+  openMenu(null, [
+    { label: t('Tono de mensajes'), icon: 'message', hint: t(TONES.msg[sounds.get('msg')].label), run: () => toneMenu('msg') },
+    { label: t('Tono de llamadas'), icon: 'phone', hint: t(TONES.call[sounds.get('call')].label), run: () => toneMenu('call') },
+  ], esc(t('Sonidos')));
+}
+/** Elegir tono: al tocarlo suena y queda elegido (el menú sigue abierto para probar otros). */
+function toneMenu(kind) {
+  openMenu(null, Object.keys(TONES[kind]).map((id) => ({
+    label: t(TONES[kind][id].label), chosen: sounds.get(kind) === id, icon: id === 'silencio' ? 'mic-off' : 'play',
+    run: () => { sounds.set(kind, id); playTone(kind, id); setTimeout(() => toneMenu(kind), 150); },
+  })), esc(t(kind === 'msg' ? 'Tono de mensajes' : 'Tono de llamadas')));
 }
 function fontMenu() {
   openMenu(null, Object.keys(FONT_SIZES).map((k) => ({ label: t(FONT_LABELS[k]), chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, run: () => display.setFont(k) })), esc(t('Tamaño de letra')));
@@ -836,6 +856,22 @@ photos.onChange(() => {
   const me = document.getElementById('me-photo'); if (me) me.innerHTML = photos.avatar('me', state.nick);
   renderLists(); const w = state.windows.get(state.active); if (w) dm?.onActivate(w); });
 
+/** Actitud: una frase que ven tus amigos (aunque no estés conectado). */
+async function attitudeDialog() {
+  const a = state.account;
+  const v = await openDialog({
+    title: t('Actitud'), text: esc(t('Una frase que verán tus amigos debajo de tu nombre. Déjala vacía para quitarla.')),
+    fields: [{ name: 'attitude', label: t('Tu actitud'), value: a.attitude || '', max: 140, placeholder: t('¿Cuál es tu actitud hoy?') }],
+    confirm: t('Guardar'),
+  });
+  if (!v) return profileSheet();
+  const { error } = await supabase.rpc('set_my_attitude', { p_text: v.attitude });
+  if (error) { toast(t(error.message)); return profileSheet(); }
+  a.attitude = v.attitude.trim();
+  dm?.broadcastProfile(); // a los amigos conectados les llega al instante
+  toast(t('Guardado.'));
+  profileSheet();
+}
 /** El nick es de la cuenta: cambia en todos tus dispositivos y les llega a tus amigos. */
 async function changeNickDialog() {
   const a = state.account;
@@ -877,6 +913,15 @@ async function editNameDialog() {
 }
 function languageMenu(after) {
   openMenu(null, Object.entries(LANGS).map(([code, name]) => ({ label: name, run: () => { setLang(code); retranslate(); after?.(); } })), esc(t('Idioma')));
+}
+/** Invitar amigos: el texto con mi número y los enlaces para descargar ChamuFlac. */
+async function inviteFriends() {
+  const text = t('¡Hablemos por ChamuFlac! Mi número es {n}. Descárgala o entra desde el navegador: {url}', { n: fmtNumber(state.account.number), url: 'https://chat-irc.vercel.app' });
+  try {
+    if (isNative) { const { Share } = await import('@capacitor/share'); return await Share.share({ text, dialogTitle: t('Invitar') }); }
+    if (navigator.share) return await navigator.share({ text });
+  } catch { return; }
+  copyText(text, t('Invitación copiada: pégala donde quieras.'));
 }
 const copyNumber = () => copyText(String(state.account.number), t('Número copiado: {n}', { n: fmtNumber(state.account.number) }));
 async function copyText(text, msg) {

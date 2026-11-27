@@ -13,6 +13,7 @@ import { Browser } from '@capacitor/browser';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { playTone } from '../common.js';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 
@@ -132,7 +133,9 @@ export async function notify({ title, body, peer, call = false, extra = {} }) {
     // Aviso de Windows; al hacer clic, la app vuelve al frente y abre la conversación
     try {
       desktopNotifs.get(peer)?.close();
-      const n = new Notification(title, { body, tag: 'from-' + peer, requireInteraction: call, silent: false });
+      // Aviso silencioso: suena el tono que eligió la persona (las llamadas ya suenan con su tono)
+      const n = new Notification(title, { body, tag: 'from-' + peer, requireInteraction: call, silent: true });
+      if (!call) playTone('msg');
       n.onclick = () => { desktop.focus(); desktopTap?.({ from: peer, ...extra }); n.close(); };
       desktopNotifs.set(peer, n);
       desktop.attention(); // parpadea en la barra de tareas

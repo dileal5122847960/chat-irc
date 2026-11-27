@@ -60,7 +60,7 @@ export function createFriends(ctx) {
     const acc = friends.filter((f) => f.status === 'accepted');
     const sent = friends.filter((f) => f.status === 'pending' && f.requested_by_me);
     const blocked = friends.filter((f) => f.status === 'blocked');
-    const row = (f, sub, actions) => `<li>${avatar(f.nick)}<span class="fr-main"><b class="ugc">${esc(f.nick)}</b><small class="${sub.ugc ? 'ugc' : ''}">${esc(sub.text)}</small></span>${actions}</li>`;
+    const row = (f, sub, actions) => `<li>${ctx.photos ? ctx.photos.avatar('u:' + f.user_number, f.nick) : avatar(f.nick)}<span class="fr-main"><b class="ugc">${esc(f.nick)}</b><small class="${sub.ugc ? 'ugc' : ''}">${esc(sub.text)}</small>${sub.attitude ? `<small class="attitude ugc">“${esc(sub.attitude)}”</small>` : ''}</span>${actions}</li>`;
     const name = (f) => [f.first_name, f.last_name].filter(Boolean).join(' ');
     box.innerHTML = `
       <div class="fr-head"><h3>Amigos</h3><button type="button" class="icon-btn" data-fr-close title="Cerrar">${icon('x')}</button></div>
@@ -69,7 +69,7 @@ export function createFriends(ctx) {
       ${inc.length ? `<h4 class="fr-sec">Solicitudes recibidas</h4><ul class="fr-list">${inc.map((f) => row(f, { text: fmtNumber(f.user_number) },
         `<button class="btn small" data-fr-reject="${f.user_number}">Rechazar</button><button class="btn small primary" data-fr-accept="${f.user_number}">Aceptar</button>`)).join('')}</ul>` : ''}
       <h4 class="fr-sec">Tus amigos</h4>
-      ${acc.length ? `<ul class="fr-list">${acc.map((f) => row(f, { text: name(f), ugc: true },
+      ${acc.length ? `<ul class="fr-list">${acc.map((f) => row(f, { text: name(f), ugc: true, attitude: f.attitude },
         `<button class="btn small primary" data-fr-chat="${f.user_number}">${icon('message')} Hablar</button><button class="icon-btn" data-fr-remove="${f.user_number}" title="Eliminar amigo">${icon('trash')}</button><button class="icon-btn" data-fr-block="${f.user_number}" title="Bloquear">${icon('shield-off')}</button>`)).join('')}</ul>`
         : `<p class="muted small">Aún no tienes amigos. Pulsa «Agregar amigo» y escribe el número de la otra persona: lo ve en la app o en su menú de usuario.</p>`}
       ${sent.length ? `<h4 class="fr-sec">Solicitudes enviadas</h4><ul class="fr-list">${sent.map((f) => row(f, { text: t('Esperando respuesta…') },
@@ -156,6 +156,7 @@ export function createFriends(ctx) {
     if (!f) return;
     if (p.nick) f.nick = p.nick;
     if (p.first !== undefined) { f.first_name = p.first; f.last_name = p.last; }
+    if (p.attitude !== undefined) f.attitude = p.attitude;
     render();
   }
   const nickOf = (number) => friends.find((f) => String(f.user_number) === String(number))?.nick;
