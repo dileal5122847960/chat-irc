@@ -170,7 +170,6 @@ export function createGames(api) {
         const cat = String(a.cat);
         const sheet = s.sheet[by];
         if (!s.rolls || !GEN_CATS.includes(cat) || sheet[cat] != null) return false;
-        if (cat === 'D' && sheet.G !== 50 && !genIsGenerala(s.dice)) return false;
         const pts = genScore(s.dice, cat, s.rolls === 1, sheet);
         sheet[cat] = pts;
         if (cat === 'G' && pts && s.rolls === 1) { s.phase = 'end'; s.winner = by; s.servida = true; return genReveal(s); } // generala servida: gana
@@ -278,7 +277,6 @@ export function createGames(api) {
     return out;
   }
   const counts = (d) => d.reduce((a, x) => ((a[x] = (a[x] || 0) + 1), a), {});
-  const genIsGenerala = (d) => d[0] && d.every((x) => x === d[0]);
   function genScore(d, cat, servida, sheet) {
     const c = counts(d), vals = Object.values(c).sort((a, b) => b - a);
     const sorted = [...new Set(d)].sort().join('');
@@ -307,7 +305,7 @@ export function createGames(api) {
     const rows = GEN_CATS.map((c) => `<tr><td>${esc(t(GEN_NAMES[c]))}</td>${s.players.map((p) => {
       const v = s.sheet[p.id]?.[c];
       if (v != null) return `<td class="${v ? '' : 'zero'}">${v || '✕'}</td>`;
-      if (myTurn && p.id === myId && s.rolls && !(c === 'D' && s.sheet[p.id].G !== 50)) {
+      if (myTurn && p.id === myId && s.rolls) { // se puede tachar cualquier casilla (0)
         const pts = genScore(s.dice, c, s.rolls === 1, s.sheet[p.id]);
         return `<td><button type="button" class="gen-pick ${pts ? '' : 'zero'}" data-g-act="${id}" data-a='{"do":"score","cat":"${c}"}'>${pts || '✕'}</button></td>`;
       }
