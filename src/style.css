@@ -1045,3 +1045,24 @@ button.once:hover { border-color: var(--dm-accent); }
 .mo-bgs button.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--panel, #fff) inset; }
 .mo-viewer ~ .dialog-wrap, .mo-viewer ~ .menu-pop, .mo-viewer ~ .sheet-scrim { z-index: 320; }
 .mo-top .avatar { width: 38px; height: 38px; flex: none; }
+
+/* ---------- Cámara (privados) ---------- */
+.cam-wrap { position: fixed; inset: 0; z-index: 330; background: #000; display: grid; place-items: center; }
+.cam { position: relative; width: min(100vw, 720px); height: min(100dvh, 900px); background: #000; overflow: hidden; color: #fff; }
+.cam-live, .cam-preview video, .cam-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.cam-live.mirror { transform: scaleX(-1); }
+.cam-preview { position: absolute; inset: 0; }
+.cam-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: calc(10px + var(--sat, 0px)) 12px 10px; background: linear-gradient(rgba(0,0,0,.5), transparent); z-index: 2; }
+.cam-top .icon-btn { color: #fff; }
+.cam-timer { background: #e11d48; padding: 3px 10px; border-radius: 999px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cam-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px 16px calc(22px + var(--sab, 0px)); background: linear-gradient(transparent, rgba(0,0,0,.6)); z-index: 2; }
+.cam-modes { display: flex; gap: 6px; }
+.cam-modes button { border: 0; background: rgba(255,255,255,.15); color: #fff; font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 999px; cursor: pointer; }
+.cam-modes button.on { background: #fff; color: #111; }
+.cam-shutter { width: 74px; height: 74px; border-radius: 50%; border: 4px solid #fff; background: none; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.cam-shutter i { width: 58px; height: 58px; border-radius: 50%; background: #fff; transition: all .15s; }
+.cam-shutter.video i { background: #e11d48; }
+.cam-shutter.rec i { width: 28px; height: 28px; border-radius: 6px; }
+.cam-review { display: flex; gap: 12px; }
+.cam .hidden { display: none !important; }
+.cam-review .btn:not(.primary) { color: #111; background: #fff; }

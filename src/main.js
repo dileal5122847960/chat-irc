@@ -14,6 +14,7 @@ import { createGroups } from './groups.js';
 import { captchaToken } from './captcha.js';
 import { createModeration } from './moderation.js';
 import { createMoments } from './moments.js';
+import { nativeCapture, cameraDialog } from './camera.js';
 import { webPushState, webPushToken, webPushOff, onWebPushTap } from './webpush.js';
 import { mountAds } from './ads.js';
 import { createPolls } from './polls.js';
@@ -634,7 +635,20 @@ function renderClient() {
     const w = state.windows.get(state.active);
     if (w?.kind === 'dm') dm.startCall(w, true); else if (w && w.key !== 'status') gc.join(w);
   };
-  document.getElementById('attach-btn').onclick = () => document.getElementById('file-input').click();
+  document.getElementById('attach-btn').onclick = (e) => {
+    const w = state.windows.get(state.active);
+    if (w?.kind !== 'dm') return;
+    const mobile = /Android|iPhone|iPad/.test(navigator.userAgent);
+    const camera = async (kind) => {
+      const f = mobile ? await nativeCapture(kind) : await cameraDialog({ t, esc, icon, mode: kind });
+      if (f && state.windows.get(w.key)) dm.sendFile(w, f);
+    };
+    openMenu(e.currentTarget, [
+      { label: 'Galería o archivo', icon: 'image', onClick: () => document.getElementById('file-input').click() },
+      { label: 'Sacar foto', icon: 'camera', onClick: () => camera('photo') },
+      { label: 'Grabar video', icon: 'video', onClick: () => camera('video') },
+    ]);
+  };
   document.getElementById('file-input').onchange = (e) => {
     const w = state.windows.get(state.active);
     if (w?.kind === 'dm') [...e.target.files].forEach((f) => dm.sendFile(w, f));

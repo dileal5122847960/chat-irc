@@ -9,6 +9,14 @@
  */
 import { qrSvg, scanQR, friendLink, numberFromQr } from './qr.js';
 
+// Campos de número de amigo: solo dígitos (y espacios), con teclado numérico en el teléfono
+document.addEventListener('focusin', (e) => { if (e.target.matches?.('.dialog input[name=number]')) e.target.inputMode = 'numeric'; });
+document.addEventListener('input', (e) => {
+  if (!e.target.matches?.('.dialog input[name=number]')) return;
+  const v = e.target.value.replace(/[^\d ]/g, '');
+  if (v !== e.target.value) e.target.value = v;
+});
+
 export function createFriends(ctx) {
   const { supabase, esc, icon, avatar, t, toast, openDialog, closeOverlays, SUPABASE_URL, SUPABASE_KEY } = ctx;
   let friends = [];

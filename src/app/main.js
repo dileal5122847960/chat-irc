@@ -19,6 +19,7 @@ import { createMailbox } from '../mailbox.js';
 import { createGroups } from '../groups.js';
 import { captchaToken } from '../captcha.js';
 import { createMoments } from '../moments.js';
+import { nativeCapture, cameraDialog } from '../camera.js';
 import { mountAds } from '../ads.js';
 import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from '../profile.js';
@@ -379,6 +380,13 @@ function dmContext() {
     onCallRing: (w, video) => { if (!isForeground()) notify({ title: w.peer.nick, body: t(video ? 'Videollamada entrante' : 'Llamada entrante'), peer: w.peer.cid, call: true }); },
   };
 }
+// Campos de número de amigo: solo dígitos (y espacios), con teclado numérico en el teléfono
+document.addEventListener('focusin', (e) => { if (e.target.matches?.('.dialog input[name=number]')) e.target.inputMode = 'numeric'; });
+document.addEventListener('input', (e) => {
+  if (!e.target.matches?.('.dialog input[name=number]')) return;
+  const v = e.target.value.replace(/[^\d ]/g, '');
+  if (v !== e.target.value) e.target.value = v;
+});
 const previewText = (m) => (m.kind === 'sticker' ? '😀 Sticker' : m.kind === 'file' ? (m.file?.voice ? '🎤 ' + t('Nota de voz') : '📎 ' + (m.file?.name || '')) : String(m.text || '').slice(0, 120));
 
 /* ---------- Dispositivo, buzón y avisos push ---------- */
@@ -572,7 +580,19 @@ function renderShell() {
   const cur = () => state.windows.get(state.active);
   document.getElementById('call-audio').onclick = () => cur() && dm.startCall(cur(), false);
   document.getElementById('call-video').onclick = () => cur() && dm.startCall(cur(), true);
-  document.getElementById('attach-btn').onclick = () => document.getElementById('file-input').click();
+  document.getElementById('attach-btn').onclick = (e) => {
+    const w = cur();
+    if (!w) return;
+    const camera = async (kind) => {
+      const f = isNative ? await nativeCapture(kind) : await cameraDialog({ t, esc, icon, mode: kind });
+      if (f && state.windows.get(w.key)) dm.sendFile(w, f);
+    };
+    openMenu(e.currentTarget, [
+      { label: t('Galería o archivo'), icon: 'image', run: () => document.getElementById('file-input').click() },
+      { label: t('Sacar foto'), icon: 'camera', run: () => camera('photo') },
+      { label: t('Grabar video'), icon: 'video', run: () => camera('video') },
+    ]);
+  };
   document.getElementById('file-input').onchange = (e) => { const w = cur(); if (w) [...e.target.files].forEach((f) => dm.sendFile(w, f)); e.target.value = ''; };
   document.getElementById('mic-btn').onclick = () => cur() && dm.startVoice(cur());
   document.getElementById('once-btn').onclick = () => dm.setOnceMode(!dm.isOnceMode());
