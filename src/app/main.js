@@ -22,7 +22,7 @@ import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from 
 import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, loopTone, playTone, sounds, TONES } from '../common.js';
 import {
-  isNative, isApp, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, installUpdate, initAppEvents,
+  isNative, isApp, isDesktop, platform, AUTH_REDIRECT, hideSplash, openExternal, closeExternal, installUpdate, initAppEvents,
   deviceName, initPush, initLocal, notify, clearNotifications, isForeground, shareFile, saveFile, canShareFiles,
 } from './native.js';
 
@@ -340,9 +340,10 @@ function dmContext() {
     onBackgroundOpen: (w) => { renderLists(); if (isForeground()) playTone('msg'); },
     onIncoming: (w, m) => {
       if (isForeground() && state.active === w.key) return;
-      if (isForeground()) playTone('msg');
+      if (isForeground()) { playTone('msg'); try { navigator.vibrate?.(25); } catch { /* nada */ } }
       else notify({ title: w.peer.nick, body: previewText(m), peer: w.peer.cid });
     },
+    onBuzz: () => { playTone('call', 'digital'); if (isDesktop) window.chamuflacDesktop?.attention(); },
     onCallRing: (w, video) => { if (!isForeground()) notify({ title: w.peer.nick, body: t(video ? 'Videollamada entrante' : 'Llamada entrante'), peer: w.peer.cid, call: true }); },
   };
 }
@@ -541,7 +542,7 @@ function friendsHtml(incoming) {
   }
   html += `<h3 class="m-sec">Amigos</h3>`;
   html += friends.length ? friends.map((f) => `<div class="m-row friend" data-friend="${f.number}">
-      <button class="m-row-open" data-chat="${f.number}"><span class="m-av">${photos.avatar('u:' + f.number, f.nick)}</span>
+      <button class="m-row-open" data-chat="${f.number}"><span class="m-av ${state.windows.get('dm:' + f.number)?.status === 'open' ? 'online' : ''}">${photos.avatar('u:' + f.number, f.nick)}</span>
       <span class="m-row-main"><b class="ugc">${esc(f.nick)}</b><small class="ugc">${esc(name(f))}</small>${f.attitude ? `<small class="attitude ugc">“${esc(f.attitude)}”</small>` : ''}</span></button>
       <button class="icon-btn" data-call="${f.number}" title="Llamada de voz">${icon('phone')}</button>
       <button class="icon-btn" data-vcall="${f.number}" title="Videollamada">${icon('video')}</button>
@@ -778,8 +779,29 @@ function chatMenu(anchor) {
   if (!w) return;
   openMenu(anchor, [
     ...(['closed', 'rejected', 'offline'].includes(w.status) ? [{ label: t('Volver a conectar'), icon: 'refresh', run: () => openChat(w.peer.cid) }] : []),
+    { label: t('Buscar en la conversación'), icon: 'search', run: () => dm.openSearch() },
+    { label: t('Mensajes temporales'), icon: 'clock', hint: dm.ttlOf(w) ? ttlText(dm.ttlOf(w)) : t('Desactivados'), run: () => ttlMenu(w) },
+    { label: t('Enviar zumbido'), icon: 'zap', run: () => dm.sendBuzz(w) },
+    { label: t('Código de seguridad'), icon: 'shield', run: () => securityDialog(w) },
+    '-',
     { label: t('Cerrar conversación'), icon: 'x', danger: true, run: () => dm.closeWindow(w) },
   ]);
+}
+const TTLS = [0, 3600, 86400, 7 * 86400];
+const ttlText = (s) => (!s ? t('Desactivados') : dm.ttlLabel(s));
+function ttlMenu(w) {
+  openMenu(null, TTLS.map((s) => ({ label: ttlText(s), chosen: dm.ttlOf(w) === s, run: () => dm.setTtl(w, s) })),
+    `<b>${esc(t('Mensajes temporales'))}</b><small>${esc(t('Los mensajes nuevos se borran solos de los dos dispositivos pasado ese tiempo.'))}</small>`);
+}
+async function securityDialog(w) {
+  const code = await dm.securityCode(w);
+  await openDialog({
+    title: t('Código de seguridad'),
+    text: code
+      ? `${esc(t('Si en el teléfono de {nick} aparece el mismo código, la conversación está cifrada de extremo a extremo con esa persona y nadie en el medio puede leerla.', { nick: w.peer.nick }))}<br><br><b class="sec-code">${esc(code)}</b>`
+      : esc(t('Solo se puede comprobar con la conexión directa abierta. Abre la conversación con tu amigo conectado y vuelve a intentarlo.')),
+    confirm: t('Aceptar'),
+  });
 }
 function accountMenu(anchor) {
   const a = state.account;

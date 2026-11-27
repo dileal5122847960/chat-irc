@@ -1228,6 +1228,20 @@ function memberMenu(anchor, cid) {
   const role = isOwner(w.ch, p.uid) ? 'Creador del canal' : personIsAdmin(w, p) ? (isPermAdmin(w.ch, p.uid) ? 'Administrador' : 'Administrador temporal') : p.reg ? 'Usuario registrado' : 'Invitado';
   openMenu(anchor, items.length ? items : [{ label: 'Sin acciones disponibles', disabled: true }], { title: `${avatarWithRole(p.nick, roleOf(w, p))}<span><b>${esc(p.nick)}</b><small>${role}</small></span>` });
 }
+const webTtlText = (s) => dm.ttlLabel(s);
+function webTtlMenu(anchor, w) {
+  openMenu(anchor, [0, 3600, 86400, 7 * 86400].map((s) => ({ label: s ? webTtlText(s) : t('Desactivados'), chosen: dm.ttlOf(w) === s, onClick: () => dm.setTtl(w, s) })),
+    { title: `<span><b>${esc(t('Mensajes temporales'))}</b><small>${esc(t('Los mensajes nuevos se borran solos de los dos dispositivos pasado ese tiempo.'))}</small></span>` });
+}
+async function webSecurity(w) {
+  const code = await dm.securityCode(w);
+  await openDialog({
+    title: 'Código de seguridad',
+    text: code ? `${esc(t('Si en el teléfono de {nick} aparece el mismo código, la conversación está cifrada de extremo a extremo con esa persona y nadie en el medio puede leerla.', { nick: w.peer.nick }))}<br><br><b class="sec-code">${esc(code)}</b>`
+      : esc(t('Solo se puede comprobar con la conexión directa abierta. Abre la conversación con tu amigo conectado y vuelve a intentarlo.')),
+    confirm: 'Aceptar',
+  });
+}
 function channelMenu(anchor) {
   const w = state.windows.get(state.active);
   if (!w || w.key === 'status') return;
@@ -1237,6 +1251,10 @@ function channelMenu(anchor) {
       { label: 'Llamada de voz', icon: 'phone', disabled: !open || !!w.call, onClick: () => dm.startCall(w, false) },
       { label: 'Videollamada', icon: 'video', disabled: !open || !!w.call, onClick: () => dm.startCall(w, true) },
       { label: 'Enviar archivo', icon: 'clip', disabled: !open, onClick: () => document.getElementById('file-input').click() },
+      { label: 'Buscar en la conversación', icon: 'search', onClick: () => dm.openSearch() },
+      ...(w.via === 'user' ? [{ label: 'Mensajes temporales', icon: 'clock', hint: t(dm.ttlOf(w) ? webTtlText(dm.ttlOf(w)) : 'Desactivados'), onClick: () => webTtlMenu(anchor, w) }] : []),
+      { label: 'Enviar zumbido', icon: 'zap', disabled: !open, onClick: () => dm.sendBuzz(w) },
+      { label: 'Código de seguridad', icon: 'shield', disabled: !open || w.relay, onClick: () => webSecurity(w) },
       { label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) },
       { label: 'Limpiar pantalla', icon: 'eraser', onClick: () => { w.lines = []; w.last = null; document.getElementById('log').innerHTML = ''; } },
       '-',
@@ -1475,6 +1493,7 @@ const dm = createDM({
   nickOf: (number) => friends.nickOf(number),
   // Solo las llamadas despiertan al amigo al conectar; los mensajes lo avisan al dejarlos en el buzón
   onRequestSent: (peer, w) => { if (w.via === 'user' && w.autoCall !== undefined) friends.notify(peer.cid, 'call', w.id, !!w.autoCall); },
+  onBuzz: () => playTone('call', 'digital'),
   onBackgroundOpen: (w) => { beep(); toast(t('{nick} abrió una conversación privada contigo.', { nick: w.peer.nick })); },
 });
 function openPrivate(cid) {

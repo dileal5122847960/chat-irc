@@ -257,6 +257,7 @@ export function createDM(ctx) {
       sendQueue: Promise.resolve(), incoming: new Map(), call: null,
       msgs: new Map(), unreadMids: [], lastBubble: null,
     };
+    try { w.ttl = Number(localStorage.getItem('ttl:' + (w.via === 'user' ? 'u:' : 't:') + peer.cid)) || 0; } catch { w.ttl = 0; }
     const prev = carry.get(w.key);
     if (prev) { carry.delete(w.key); w.lines = prev.lines; w.msgs = prev.msgs; w.unreadMids = prev.unreadMids || []; w.unread = prev.unread || 0; }
     state.windows.set(w.key, w);
@@ -273,6 +274,7 @@ export function createDM(ctx) {
       pending: w.via === 'user' ? 'Conectando…' : 'Esperando respuesta…', connecting: 'Conectando…',
       offline: canMail(w) ? 'sin conexión · tus mensajes le llegarán al conectarse' : 'sin conexión', open: w.relay ? 'en línea · vía servidor (sin cifrado de extremo a extremo)' : 'en línea · cifrado de extremo a extremo',
       away: 'reconectando…', closed: 'Conversación cerrada', rejected: 'No disponible',
+    ...(w.status === 'open' && w.typingUntil > Date.now() ? { open: 'escribiendo…' } : {}),
     }[w.status] || '';
   }
   function renderHeader(w) {
@@ -298,6 +300,8 @@ export function createDM(ctx) {
   function onActivate(w) {
     renderHeader(w);
     syncComposer(w);
+    renderReplyBar(w);
+    document.querySelector('.chat-search')?.remove();
     markRead(w);
     // Amigo sin conexión en curso: al abrir la conversación se intenta conectar de nuevo
     if (w.via === 'user' && isIdle(w) && ctx.autoReconnect) setTimeout(() => { if (state.active === w.key && isIdle(w)) requestPrivate({ ...w.peer }); }, 0);
@@ -305,7 +309,7 @@ export function createDM(ctx) {
   // Con amigos el chat queda limpio, como en una app de mensajería: sin avisos de conexión,
   // reconexión ni errores (el estado se ve en la cabecera y en las marcas). Solo las llamadas.
   function sysLine(w, html, kind = 'info') {
-    if (w.via === 'user' && !/📞|📹/.test(html)) return;
+    if (w.via === 'user' && !/📞|📹|📳|⏱/.test(html)) return;
     ctx.sys(w.key, html, kind);
   }
 
@@ -518,14 +522,14 @@ export function createDM(ctx) {
   function onData(w, m) {
     switch (m.t) {
       case 'text': {
-        const msg = { mid: safeId(m.mid), mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now(), lang: LANGS[m.lang] ? m.lang : null };
+        const msg = { mid: safeId(m.mid), mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts: Date.now(), lang: LANGS[m.lang] ? m.lang : null, ...inExtras(m) };
         if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'offer'; // se traduce solo si se pide
         addMessage(w, msg); receipt(w, msg.mid);
         return;
       }
       case 'sticker': {
         if (!STICKERS.includes(m.id)) return;
-        const msg = { mid: safeId(m.mid), mine: false, kind: 'sticker', sticker: m.id, ts: Date.now() };
+        const msg = { mid: safeId(m.mid), mine: false, kind: 'sticker', sticker: m.id, ts: Date.now(), ...inExtras(m) };
         addMessage(w, msg); receipt(w, msg.mid);
         return;
       }
@@ -576,6 +580,15 @@ export function createDM(ctx) {
         if (sent?.mine && sent.file?.once) { sent.file.opened = true; rerender(w, sent.mid); }
         return;
       }
+      case 'react': case 'del': case 'ttl': return onControl(w, m);
+      case 'typing': {
+        w.typingUntil = Date.now() + 4000;
+        if (state.active === w.key) renderHeader(w);
+        clearTimeout(w.typingTimer);
+        w.typingTimer = setTimeout(() => { if (state.active === w.key) renderHeader(w); }, 4100);
+        return;
+      }
+      case 'buzz': return onBuzz(w);
       case 'photo': {
         if (!ctx.photos || (m.d !== null && typeof m.d !== 'string') || !ctx.photos.valid(m.d)) return;
         ctx.photos.set(photoKey(w), m.d);
@@ -632,6 +645,231 @@ export function createDM(ctx) {
   }
   const tickHtml = (m) => `<span class="tick ${m.tick || 'sent'}" title="${{ queued: 'Enviando…', failed: 'No enviado', sent: 'Enviado', delivered: 'Entregado', read: 'Leído' }[m.tick || 'sent']}">${icon({ queued: 'clock', failed: 'x', delivered: 'line2', read: 'line2' }[m.tick] || 'line1')}</span>`;
 
+
+  /* ================= Extras de los privados =================
+   * Responder citando · reacciones · borrar para ambos · «escribiendo…» · buscar ·
+   * mensajes temporales · zumbido · código de seguridad. Todo viaja por la conexión directa
+   * (o, con amigos desconectados, cifrado por el buzón) y nada se guarda en servidores. */
+  const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  const previewOf = (m) => (m.kind === 'sticker' ? '😀 Sticker' : m.kind === 'file' ? (m.file?.voice ? '🎤 ' + t('Nota de voz') : '📎 ' + (m.file?.name || '')) : String(m.text || '')).slice(0, 90);
+  function inExtras(m, ts = Date.now()) {
+    const x = {};
+    if (m.reply && typeof m.reply === 'object') x.reply = { mid: safeId(m.reply.mid), nick: String(m.reply.nick || '').slice(0, 20), text: String(m.reply.text || '').slice(0, 90) };
+    const ttl = Number(m.ttl);
+    if (ttl > 0) x.expires = ts + Math.min(ttl, 30 * 86400) * 1000;
+    return x;
+  }
+  /** Mensajes de control: por la conexión si la hay; si no, entre amigos, cifrados por el buzón. */
+  function sendCtl(w, obj) {
+    if (w.dc?.readyState === 'open' || (w.relay && w.rt)) return sendJSON(w, obj);
+    if (canMail(w)) ctx.mailbox.send(w.peer.cid, { ...obj, nick: state.nick, ts: Date.now() });
+  }
+  function onControl(w, m) {
+    if (m.t === 'ttl') return setTtl(w, Number(m.s) || 0, true);
+    const msg = w.msgs.get(safeId(m.mid));
+    if (!msg) return;
+    if (m.t === 'react') {
+      msg.reactions = { ...(msg.reactions || {}), peer: REACTIONS.includes(m.emoji) ? m.emoji : null };
+      rerender(w, msg.mid);
+    }
+    if (m.t === 'del' && msg.mine === false) markDeleted(w, msg);
+  }
+  function react(w, mid, emoji) {
+    const msg = w.msgs.get(mid);
+    if (!msg || msg.deleted) return;
+    const same = msg.reactions?.me === emoji;
+    msg.reactions = { ...(msg.reactions || {}), me: same ? null : emoji };
+    rerender(w, mid);
+    sendCtl(w, { t: 'react', mid, emoji: same ? null : emoji });
+  }
+  function markDeleted(w, msg) {
+    msg.deleted = true; msg.reactions = null;
+    if (msg.file?.url && msg.file.url.startsWith('blob:')) { try { URL.revokeObjectURL(msg.file.url); } catch { /* nada */ } }
+    if (msg.file) { msg.file.blob = null; }
+    msg.text = '';
+    rerender(w, msg.mid);
+  }
+  function deleteForAll(w, mid) {
+    const msg = w.msgs.get(mid);
+    if (!msg?.mine) return;
+    markDeleted(w, msg);
+    sendCtl(w, { t: 'del', mid });
+  }
+  /** Quita un mensaje solo de esta pantalla. */
+  function removeMessage(w, mid) {
+    w.msgs.delete(mid);
+    const marker = `id="m-${mid}"`;
+    w.lines = w.lines.filter((l) => !l.includes(marker));
+    document.getElementById('m-' + mid)?.remove();
+  }
+
+  /* --- Barra de acciones al tocar una burbuja --- */
+  function closeActions() { document.querySelectorAll('.msg-actions').forEach((el) => el.remove()); }
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.msg-actions')) return;
+    const bubble = e.target.closest('#log .bub-row .bubble');
+    closeActions();
+    if (!bubble || e.target.closest('a, button, img, video, input, .voice, .once, .fact, .bquote')) return;
+    const row = bubble.closest('.bub-row');
+    const w = state.windows.get(state.active);
+    const mid = row.id.slice(2);
+    const msg = w?.msgs.get(mid);
+    if (!msg || msg.deleted) return;
+    const bar = document.createElement('div');
+    bar.className = 'msg-actions';
+    bar.innerHTML = `<span class="ma-reacts">${REACTIONS.map((r) => `<button type="button" data-ma-react="${r}" class="${msg.reactions?.me === r ? 'on' : ''}">${r}</button>`).join('')}</span>
+      <span class="ma-btns"><button type="button" data-ma="reply" title="${esc(t('Responder'))}">${icon('back')}</button>
+      ${msg.kind === 'text' || msg.kind === 'action' ? `<button type="button" data-ma="copy" title="${esc(t('Copiar'))}">${icon('copy')}</button>` : ''}
+      <button type="button" data-ma="del" title="${esc(t('Borrar'))}">${icon('trash')}</button></span>`;
+    row.appendChild(bar);
+    // Si la burbuja está arriba del todo, la barra va debajo (si no, la taparía la cabecera)
+    const log = row.closest('.log');
+    if (log && row.getBoundingClientRect().top - log.getBoundingClientRect().top < 56) bar.classList.add('below');
+    bar.onclick = (ev) => {
+      ev.stopPropagation(); // la barra cambia su contenido: que el clic no la cierre
+      const r = ev.target.closest('[data-ma-react]'), b = ev.target.closest('[data-ma]');
+      if (r) { react(w, mid, r.dataset.maReact); return closeActions(); }
+      if (!b) return;
+      if (b.dataset.ma === 'reply') { setReply(w, mid); return closeActions(); }
+      if (b.dataset.ma === 'copy') { navigator.clipboard?.writeText(msg.text || '').then(() => toast(t('Copiado.'))); return closeActions(); }
+      if (b.dataset.ma === 'del') {
+        bar.innerHTML = `<span class="ma-btns ma-del"><button type="button" data-ma="del-me">${esc(t('Borrar para mí'))}</button>${msg.mine ? `<button type="button" data-ma="del-all" class="danger">${esc(t('Borrar para todos'))}</button>` : ''}</span>`;
+        return;
+      }
+      if (b.dataset.ma === 'del-me') { removeMessage(w, mid); return closeActions(); }
+      if (b.dataset.ma === 'del-all') { deleteForAll(w, mid); return closeActions(); }
+    };
+  });
+  // Tocar la cita lleva al mensaje original
+  document.addEventListener('click', (e) => {
+    const q = e.target.closest('#log .bquote[data-goto]');
+    if (!q) return;
+    const el = document.getElementById('m-' + q.dataset.goto);
+    if (!el) return toast(t('Ese mensaje ya no está en la pantalla.'));
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400);
+  });
+
+  /* --- Responder citando --- */
+  function setReply(w, mid) {
+    const m = w.msgs.get(mid);
+    if (!m) return;
+    w.replyTo = { mid, nick: m.mine ? state.nick : w.peer.nick, text: previewOf(m) };
+    renderReplyBar(w);
+    document.getElementById('input')?.focus();
+  }
+  function renderReplyBar(w) {
+    const form = document.getElementById('input-form');
+    if (!form || state.active !== w.key) return;
+    form.querySelector('.reply-bar')?.remove();
+    if (!w.replyTo) return;
+    const bar = document.createElement('div');
+    bar.className = 'reply-bar';
+    bar.innerHTML = `<span class="bquote"><b class="ugc">${esc(w.replyTo.nick)}</b><span class="ugc">${esc(w.replyTo.text)}</span></span><button type="button" class="icon-btn sm" title="${esc(t('Cancelar'))}">${icon('x')}</button>`;
+    bar.querySelector('button').onclick = () => { w.replyTo = null; renderReplyBar(w); };
+    form.prepend(bar);
+  }
+
+  /* --- «escribiendo…» --- */
+  document.addEventListener('input', (e) => {
+    if (e.target.id !== 'input') return;
+    const w = state.windows.get(state.active);
+    if (w?.kind !== 'dm' || w.status !== 'open' || !e.target.value) return;
+    if (Date.now() - (w.typingSent || 0) < 2500) return;
+    w.typingSent = Date.now();
+    sendJSON(w, { t: 'typing' });
+  });
+
+  /* --- Mensajes temporales --- */
+  const ttlKey = (w) => 'ttl:' + photoKey(w);
+  function setTtl(w, seconds, fromPeer = false) {
+    const s = Math.max(0, Math.min(Number(seconds) || 0, 30 * 86400));
+    if ((w.ttl || 0) === s) return;
+    w.ttl = s;
+    try { s ? localStorage.setItem(ttlKey(w), String(s)) : localStorage.removeItem(ttlKey(w)); } catch { /* nada */ }
+    const label = s ? ttlLabel(s) : '';
+    sysLine(w, s ? `⏱ ${esc(t('Mensajes temporales: se borran a los {t}.', { t: label }))}` : `⏱ ${esc(t('Mensajes temporales desactivados.'))}`);
+    if (!fromPeer) sendCtl(w, { t: 'ttl', s });
+  }
+  const ttlLabel = (s) => {
+    const [n, one, many] = s >= 86400 ? [s / 86400, '1 día', '{n} días'] : s >= 3600 ? [s / 3600, '1 hora', '{n} horas'] : [s / 60, '1 minuto', '{n} minutos'];
+    return n === 1 ? t(one) : t(many, { n });
+  };
+  setInterval(() => {
+    const now = Date.now();
+    for (const w of dmWindows()) for (const m of [...w.msgs.values()]) if (m.expires && m.expires <= now) removeMessage(w, m.mid);
+  }, 15000);
+
+  /* --- Zumbido --- */
+  function sendBuzz(w) {
+    if (!(w.dc?.readyState === 'open' || w.relay)) return toast(t('El zumbido solo se puede enviar cuando están conectados.'));
+    if (Date.now() - (w.buzzSent || 0) < 8000) return toast(t('Espera unos segundos para enviar otro zumbido.'));
+    w.buzzSent = Date.now();
+    sendJSON(w, { t: 'buzz' });
+    sysLine(w, `📳 ${esc(t('Enviaste un zumbido.'))}`);
+    shake();
+  }
+  function onBuzz(w) {
+    if (Date.now() - (w.buzzGot || 0) < 5000) return;
+    w.buzzGot = Date.now();
+    sysLine(w, `📳 <b>${esc(w.peer.nick)}</b> ${esc(t('te envió un zumbido.'))}`);
+    shake();
+    try { navigator.vibrate?.([300, 120, 300, 120, 300]); } catch { /* nada */ }
+    ctx.onBuzz?.(w);
+  }
+  function shake() {
+    const el = document.querySelector('.app') || document.body;
+    el.classList.remove('buzz'); void el.offsetWidth; el.classList.add('buzz');
+    setTimeout(() => el.classList.remove('buzz'), 800);
+  }
+
+  /* --- Código de seguridad (comprobar el cifrado de extremo a extremo) --- */
+  async function securityCode(w) {
+    if (!w.pc || w.relay || w.dc?.readyState !== 'open') return null;
+    const stats = await w.pc.getStats();
+    let tr = null; const certs = new Map();
+    stats.forEach((r) => { if (r.type === 'transport' && r.localCertificateId) tr = r; if (r.type === 'certificate') certs.set(r.id, r.fingerprint); });
+    const a = certs.get(tr?.localCertificateId), b = certs.get(tr?.remoteCertificateId);
+    if (!a || !b) return null;
+    const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode([a, b].sort().join('|'))));
+    const groups = [];
+    for (let i = 0; i < 12; i++) groups.push(String(((bytes[i * 2] << 8) | bytes[i * 2 + 1]) % 100000).padStart(5, '0'));
+    return groups.join(' ');
+  }
+
+  /* --- Buscar en la conversación --- */
+  function openSearch() {
+    const w = state.windows.get(state.active);
+    if (w?.kind !== 'dm') return;
+    document.querySelector('.chat-search')?.remove();
+    const bar = document.createElement('div');
+    bar.className = 'chat-search';
+    bar.innerHTML = `${icon('search')}<input type="search" placeholder="${esc(t('Buscar en la conversación'))}"><small></small><button type="button" class="icon-btn sm" data-next title="${esc(t('Siguiente'))}">${icon('back')}</button><button type="button" class="icon-btn sm" data-close title="${esc(t('Cerrar'))}">${icon('x')}</button>`;
+    document.querySelector('.chat-body')?.before(bar);
+    const input = bar.querySelector('input'), count = bar.querySelector('small');
+    let hits = [], k = -1;
+    const clear = () => document.querySelectorAll('#log .bub-row.hit, #log .bub-row.hit-now').forEach((el) => el.classList.remove('hit', 'hit-now'));
+    const show = () => {
+      document.querySelectorAll('#log .hit-now').forEach((el) => el.classList.remove('hit-now'));
+      if (!hits.length) { count.textContent = input.value ? '0' : ''; return; }
+      const el = hits[k]; el.classList.add('hit-now'); el.scrollIntoView({ block: 'center' });
+      count.textContent = `${k + 1}/${hits.length}`;
+    };
+    input.oninput = () => {
+      clear();
+      const q = input.value.trim().toLowerCase();
+      hits = q ? [...document.querySelectorAll('#log .bub-row')].filter((el) => el.textContent.toLowerCase().includes(q)) : [];
+      hits.forEach((el) => el.classList.add('hit'));
+      k = hits.length - 1; show(); // del más reciente hacia atrás
+    };
+    const next = () => { if (!hits.length) return; k = (k - 1 + hits.length) % hits.length; show(); };
+    input.onkeydown = (e) => { if (e.key === 'Enter') next(); if (e.key === 'Escape') close(); };
+    const close = () => { clear(); bar.remove(); };
+    bar.querySelector('[data-next]').onclick = next;
+    bar.querySelector('[data-close]').onclick = close;
+    input.focus();
+  }
+
   /* ---------------- Burbujas ---------------- */
   function addMessage(w, m) {
     m.mid ||= crypto.randomUUID();
@@ -644,8 +882,14 @@ export function createDM(ctx) {
     if (!m.mine) ctx.onIncoming?.(w, m);
   }
   function bubbleHtml(w, m) {
-    const meta = `<span class="bmeta">${time(m.ts)}${m.mine ? tickHtml(m) : ''}</span>`;
+    const meta = `<span class="bmeta">${m.expires ? `<span class="ttl-ico" title="${esc(t('Mensaje temporal'))}">⏱</span>` : ''}${time(m.ts)}${m.mine ? tickHtml(m) : ''}</span>`;
     let cls = '', body;
+    if (m.deleted) {
+      return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} deleted" id="m-${m.mid}"><div class="bubble"><div class="btext"><i>🚫 ${esc(t(m.mine ? 'Borraste este mensaje' : 'Se borró este mensaje'))}</i><span class="meta-spacer"></span></div>${meta}</div></div>`;
+    }
+    const quote = m.reply ? `<div class="bquote" data-goto="${esc(m.reply.mid)}"><b class="ugc">${esc(m.reply.nick)}</b><span class="ugc">${esc(m.reply.text)}</span></div>` : '';
+    const reacts = m.reactions && (m.reactions.me || m.reactions.peer)
+      ? `<div class="breacts">${[...new Set([m.reactions.me, m.reactions.peer].filter(Boolean))].map((e) => `<span>${esc(e)}${m.reactions.me === e && m.reactions.peer === e ? '<small>2</small>' : ''}</span>`).join('')}</div>` : '';
     if (m.kind === 'text') {
       const onlyEmoji = /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,12}$/u.test(m.text) && !/^[\d#*\s]+$/.test(m.text) && [...new Intl.Segmenter().segment(m.text.trim())].length <= 3;
       if (onlyEmoji) { cls = 'emoji-only'; body = `<div class="big-emoji">${esc(m.text)}</div>`; }
@@ -660,7 +904,7 @@ export function createDM(ctx) {
       if (f.voice || f.kind === 'audio') cls = 'voice-msg';
       body = fileHtml(w, m, f);
     }
-    return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls}" id="m-${m.mid}"><div class="bubble">${body}${meta}</div></div>`;
+    return `<div class="bub-row ${m.mine ? 'out' : 'in'} ${m.first ? 'first' : ''} ${cls} ${reacts ? 'has-reacts' : ''}" id="m-${m.mid}"><div class="bubble">${quote}${body}${meta}${reacts}</div></div>`;
   }
   /**
    * Cuerpo de texto. Siempre se muestra el original; si llegó en otro idioma distinto del
@@ -842,10 +1086,20 @@ export function createDM(ctx) {
   }
 
   /* ---------------- Enviar ---------------- */
+  /** Respuesta citada y temporizador que acompañan al próximo mensaje. */
+  function extras(w) {
+    const x = {};
+    if (w.replyTo) x.reply = w.replyTo;
+    if (w.ttl) x.ttl = w.ttl;
+    w.replyTo = null; renderReplyBar(w);
+    return x;
+  }
+  const localExtras = (x) => ({ reply: x.reply || null, expires: x.ttl ? Date.now() + x.ttl * 1000 : 0 });
   function sendText(w, text, kind = 'msg') {
     const mid = crypto.randomUUID();
-    const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: detectLang(text) || getLang() }; // idioma real del texto
-    const local = { mid, mine: true, kind: data.kind, text, ts: Date.now() };
+    const x = extras(w);
+    const data = { t: 'text', mid, text, kind: kind === 'action' ? 'action' : 'text', lang: detectLang(text) || getLang(), ...x }; // idioma real del texto
+    const local = { mid, mine: true, kind: data.kind, text, ts: Date.now(), ...localExtras(x) };
     if (w.status !== 'open') return canMail(w) && sendViaMail(w, data, local);
     sendJSON(w, data);
     addMessage(w, local);
@@ -853,9 +1107,10 @@ export function createDM(ctx) {
   function sendSticker(w, id) {
     if (!STICKERS.includes(id)) return;
     const mid = crypto.randomUUID();
-    const local = { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now() };
-    if (w.status !== 'open') return canMail(w) && sendViaMail(w, { t: 'sticker', mid, id }, local);
-    sendJSON(w, { t: 'sticker', mid, id });
+    const x = extras(w);
+    const local = { mid, mine: true, kind: 'sticker', sticker: id, ts: Date.now(), ...localExtras(x) };
+    if (w.status !== 'open') return canMail(w) && sendViaMail(w, { t: 'sticker', mid, id, ...x }, local);
+    sendJSON(w, { t: 'sticker', mid, id, ...x });
     addMessage(w, local);
   }
   /** Amigo sin conexión directa: el mensaje se cifra para sus dispositivos y espera en el buzón. */
@@ -890,12 +1145,13 @@ export function createDM(ctx) {
       const mid = safeId(m.mid);
       if (w.msgs.has(mid)) continue;
       const ts = Math.min(Number(m.ts) || Date.parse(it.at) || Date.now(), Date.now());
+      if (m.t === 'react' || m.t === 'del' || m.t === 'ttl') { onControl(w, m); continue; }
       if (m.t === 'text') {
-        const msg = { mid, mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts, lang: LANGS[m.lang] ? m.lang : null };
+        const msg = { mid, mine: false, kind: m.kind === 'action' ? 'action' : 'text', text: String(m.text || '').slice(0, 4000), ts, lang: LANGS[m.lang] ? m.lang : null, ...inExtras(m, ts) };
         if (msg.lang && msg.lang !== getLang() && msg.text.trim()) msg.tr = 'offer'; // se traduce solo si se pide
         addMessage(w, msg);
       } else if (m.t === 'sticker' && STICKERS.includes(m.id)) {
-        addMessage(w, { mid, mine: false, kind: 'sticker', sticker: m.id, ts });
+        addMessage(w, { mid, mine: false, kind: 'sticker', sticker: m.id, ts, ...inExtras(m, ts) });
       } else continue;
       w.unreadMids.push(mid);
       (byPeer.get(from) || byPeer.set(from, []).get(from)).push(mid);
@@ -1295,7 +1551,8 @@ export function createDM(ctx) {
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
     init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile,
-    setOnceMode, isOnceMode: () => onceMode, sendText, sendFile, sendSticker, startVoice, stopVoice,
+    setOnceMode, isOnceMode: () => onceMode,
+    setReply, openSearch, setTtl, ttlOf: (w) => w.ttl || 0, ttlLabel, sendBuzz, securityCode, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };
