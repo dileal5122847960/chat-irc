@@ -11,6 +11,7 @@ import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
 import { createGroups } from './groups.js';
+import { webPushState, webPushToken, webPushOff, onWebPushTap } from './webpush.js';
 import { mountAds } from './ads.js';
 import { createPolls } from './polls.js';
 import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from './profile.js';
@@ -501,7 +502,10 @@ function enterChat(nick, registered, channel) {
   state.registered = registered;
   photos.setOwner(registered ? state.account?.id : null);
   loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
-  if (registered && state.account?.id) mailbox.register(state.account.id).then(() => { groups.start(); fetchMail(); }); // dispositivo, versión y clave del buzón; luego, grupos
+  if (registered && state.account?.id) {
+    mailbox.register(state.account.id).then(() => { groups.start(); fetchMail(); for (const d of pendingTaps.splice(0)) handlePushTap(d); }); // dispositivo, versión y clave del buzón; luego, grupos
+    if (webPushOn()) webPushToken().then((tok) => tok && mailbox.register(state.account.id, tok)); // avisos del navegador (si ya se activaron)
+  }
   renderClient();
   activate('status');
   loadChannels().then(() => {
@@ -1304,6 +1308,7 @@ function userMenu(anchor) {
   const items = [];
   if (acc?.number) items.push({ label: 'Mi número', html: `<span>${esc(t('Mi número'))}: <b class="ugc">${fmtNumber(acc.number)}</b></span>`, hint: 'Tócalo para copiarlo y compartirlo con tus amigos', icon: 'hash', onClick: () => navigator.clipboard?.writeText(String(acc.number)).then(() => toast(t('Número copiado'))) });
   if (acc) items.push({ label: 'Amigos', icon: 'users', onClick: () => friends.open() });
+  if (acc && webPushState() !== 'unsupported') items.push({ label: 'Avisos en este navegador', icon: 'bell', hint: t(webPushOn() ? 'Activados' : webPushState() === 'denied' ? 'Bloqueados' : 'Desactivados'), onClick: toggleWebPush });
   if (acc) items.push({ label: 'Nombre y apellido', hint: acc.firstName ? `${acc.firstName} ${acc.lastName}` : '', icon: 'users', onClick: editNameDialog });
   items.push(
     { label: 'Mi perfil', lead: photos.avatar('me', state.nick), hint: acc ? `${acc.firstName} ${acc.lastName}` : t(photos.mine() ? 'La ven en tus privados' : 'Sin foto'), onClick: () => profileMenu(anchor) },
@@ -1317,7 +1322,7 @@ function userMenu(anchor) {
   );
   if (state.registered && !myOwnChannel()) items.push({ label: 'Crear mi canal', icon: 'plus', onClick: () => { activate('status'); createChannelDialog(); } });
   items.push('-', { label: 'Salir del chat', icon: 'logout', onClick: quitChat });
-  if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
+  if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { const did = mailbox.deviceId(); if (did) await supabase.from('devices').update({ push_token: null }).eq('id', did); await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
   openMenu(anchor, items, { title: `${photos.avatar('me', state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
 }
 
@@ -1529,6 +1534,42 @@ const dmCtx = {
   onBackgroundOpen: (w) => { beep(); toast(t('{nick} abrió una conversación privada contigo.', { nick: w.peer.nick })); },
 };
 const dm = createDM(dmCtx);
+/* ---------- Avisos push del navegador ---------- */
+const webPushOn = () => webPushState() === 'granted' && localStorage.getItem('webpush') !== 'off';
+async function toggleWebPush() {
+  const st = webPushState();
+  if (st === 'unsupported') return toast(t('Este navegador no permite avisos.'));
+  if (st === 'denied') return toast(t('Los avisos están bloqueados para esta web: actívalos en la configuración del navegador (el candado junto a la dirección).'));
+  if (webPushOn()) {
+    try { localStorage.setItem('webpush', 'off'); } catch { /* nada */ }
+    await webPushOff();
+    const id = mailbox.deviceId();
+    if (id) await supabase.from('devices').update({ push_token: null }).eq('id', id);
+    return toast(t('Avisos desactivados en este navegador.'));
+  }
+  try { localStorage.removeItem('webpush'); } catch { /* nada */ }
+  const tok = await webPushToken({ ask: true });
+  if (!tok) return toast(t('No se pudieron activar los avisos.'));
+  await mailbox.register(state.account.id, tok);
+  toast(t('Listo: te avisaremos de mensajes y llamadas aunque cierres esta pestaña.'));
+}
+/** Al tocar un aviso del navegador: abrir la conversación, el grupo o los amigos. */
+const pendingTaps = [];
+function handlePushTap(d) {
+  if (!state.registered || !mailbox.deviceId()) return pendingTaps.push(d);
+  const from = String(d.from || '');
+  if (d.kind === 'friend') return friends.open();
+  if (d.kind === 'group' && d.id) return Promise.all([groups.load(), fetchMail()]).then(() => activate('g:' + d.id));
+  if (!from) return;
+  fetchMail().then(() => {
+    if ((d.kind === 'call' || d.kind === 'dm') && d.id && dm.acceptExternal({ id: d.id, from, nick: d.nick || from, reg: true, via: 'user' })) return;
+    const w = state.windows.get('dm:' + from);
+    if (w) return activate(w.key);
+    dm.requestPrivate({ cid: from, nick: d.nick || friends.nickOf(from) || from, reg: true, via: 'user' });
+  });
+}
+onWebPushTap(handlePushTap);
+
 /* ---------- Grupos de amigos (cuentas registradas) ---------- */
 const groups = createGroups({
   supabase, mailbox, t, esc, icon, toast, openDialog, closeOverlays, SUPABASE_URL, SUPABASE_KEY,

@@ -18,3 +18,5 @@ export const FIREBASE_WEB = {
   messagingSenderId: '932813771690',
   appId: '1:932813771690:web:3bd26b3151e171fbf6d1d3',
 };
+// Clave pública VAPID ("Certificados push web" de Firebase Cloud Messaging). También es pública.
+export const VAPID_KEY = 'BBNPMakQNns1vGkEkJQ_OK4nePozSHhKtsF9eKF7BQGOcFFQx8NmPmxPCE1rdk_F-Y8Y4meS3-u5EY0AzfCjNPo';

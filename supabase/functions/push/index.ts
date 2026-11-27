@@ -114,6 +114,8 @@ async function sendFcm(token: string, title: string, body: string, data: Record<
         token,
         notification: { title, body },
         data,
+        // Navegador (avisos web): urgente y con caducidad, como en Android
+        webpush: { headers: { Urgency: 'high', TTL: kind === 'call' ? '45' : kind === 'friend' || kind === 'msg' || kind === 'group' ? '86400' : '120' } },
         android: {
           priority: 'HIGH',
           ttl: kind === 'call' ? '45s' : kind === 'friend' || kind === 'msg' || kind === 'group' ? '86400s' : '120s', // si no llega a tiempo, ya no sirve

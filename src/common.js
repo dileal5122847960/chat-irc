@@ -17,6 +17,7 @@ const I = {
   hash: '<path d="M5 9h14M5 15h14M10 3 8 21M16 3l-2 18"/>',
   home: '<path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14a5 5 0 0 1 6 5"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   send: '<path d="M4 12 20 4l-6 16-2.5-6.5z"/>',
