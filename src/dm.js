@@ -14,6 +14,7 @@ import { EMOJI, STICKERS, stickerSvg } from './emoji.js';
 import { t, LANGS, getLang, translatedFrom } from './i18n.js';
 import { translate, detectLang } from './translate.js';
 import { createTools } from './dmtools.js';
+import { createGames } from './games.js';
 
 const MAX_FILE = 100 * 1024 * 1024; // 100 MB por archivo (conexión directa)
 const MAX_FILE_RELAY = 5 * 1024 * 1024; // 5 MB por archivo (plan B a través del servidor)
@@ -597,7 +598,7 @@ export function createDM(ctx) {
         return;
       }
       case 'buzz': return onBuzz(w);
-      case 'tool': return tools?.onData(w, m); // ta-te-ti, pizarra, ubicación
+      case 'tool': return m.k === 'game' ? games.onData(w, m, w.peer.cid) : tools?.onData(w, m); // juegos, ta-te-ti, pizarra, ubicación
       case 'photo': {
         if (!ctx.photos || (m.d !== null && typeof m.d !== 'string') || !ctx.photos.valid(m.d)) return;
         ctx.photos.set(photoKey(w), m.d);
@@ -940,7 +941,7 @@ export function createDM(ctx) {
     } else if (m.kind === 'action') {
       body = `<div class="btext"><i>* <span class="ugc">${esc(m.mine ? state.nick : m.nick || w.peer.nick)}</span> ${trBody(m)}</i><span class="meta-spacer"></span></div>`;
     } else if (m.kind === 'tool') {
-      cls = 'tool-msg'; body = tools.bubble(w, m);
+      cls = 'tool-msg'; body = m.tool === 'game' ? games.bubble(w, m) : tools.bubble(w, m);
     } else if (m.kind === 'sticker') {
       cls = 'sticker-msg'; body = `<div class="sticker">${stickerSvg(m.sticker)}</div>`;
     } else {
@@ -1700,7 +1701,8 @@ export function createDM(ctx) {
     const input = document.getElementById('input');
     input.disabled = false;
     input.placeholder = t('Mensaje en {grupo}', { grupo: w.group.name });
-    for (const id of ['attach-btn', 'mic-btn', 'tools-btn', 'once-btn']) { const b = document.getElementById(id); if (b) { b.disabled = true; b.classList.remove('on'); } }
+    const tb = document.getElementById('tools-btn'); if (tb) tb.disabled = false; // juegos
+    for (const id of ['attach-btn', 'mic-btn', 'once-btn']) { const b = document.getElementById(id); if (b) { b.disabled = true; b.classList.remove('on'); } }
     document.getElementById('emoji-btn').disabled = false;
   }
   async function sendGroup(w, data, local) {
@@ -1715,6 +1717,7 @@ export function createDM(ctx) {
     from = String(from);
     const w = groupWindow(g);
     const mine = from === String(myNumber());
+    if (m.t === 'tool' && m.k === 'game') { if (!mine) games.onData(w, m, from); return; } // juegos del grupo
     const nick = mine ? state.nick : String(memberNick(g, from) || m.nick || from).slice(0, 20);
     const mid = safeId(m.mid);
     if (m.t === 'react') {
@@ -1764,7 +1767,13 @@ export function createDM(ctx) {
   }
   function groupSys(g, html) { const w = state.windows.get(gkey(g.id)); if (w) ctx.sys(w.key, html); }
 
-  const tools = createTools({ state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast, sendBuzz, schedule });
+  const games = createGames({
+    state, addMessage, rerender, esc, icon, t, toast,
+    send: (w, obj, opts) => (w.group ? ctx.groups?.send(w.group.id, obj, opts) : sendJSON(w, obj)),
+    me: (w) => (w.group ? String(myNumber()) : String(w.self)),
+    nickOf: (w, id) => (w.group ? (id === String(myNumber()) ? state.nick : memberNick(w.group, id)) : id === String(w.self) ? state.nick : w.peer.nick),
+  });
+  const tools = createTools({ state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast, sendBuzz, schedule, games });
   return {
     openTools: (w, anchor) => tools.openMenu(w, anchor),
     init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile,

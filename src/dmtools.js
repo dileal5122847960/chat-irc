@@ -6,10 +6,11 @@
 const LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
 const COLORS = ['#e11d48', '#111827', '#2563eb', '#16a34a', '#f59e0b', '#ffffff'];
 const LIVE_MS = 15 * 60 * 1000;
+import { GAME_LIST } from './games.js';
 
 export function createTools(api) {
   const { state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast } = api;
-  const connected = (w) => w?.dc?.readyState === 'open' || (w?.relay && w.rt);
+  const connected = (w) => !!w?.group || w?.dc?.readyState === 'open' || (w?.relay && w.rt);
   const send = (w, obj) => sendJSON(w, { t: 'tool', ...obj });
 
   /* ================= Ta-te-ti ================= */
@@ -195,10 +196,12 @@ export function createTools(api) {
     document.querySelector('.dm-tools')?.remove();
     const box = document.createElement('div');
     box.className = 'dm-tools';
-    box.innerHTML = [
-      ['ttt', '🎮', 'Ta-te-ti'], ['wb', '🎨', 'Pizarra'], ['loc', '📍', 'Mi ubicación'], ['live', '📡', 'Ubicación en vivo (15 min)'], ['buzz', '📳', 'Zumbido'],
+    const games = GAME_LIST.filter((g) => !(w.group && g.dmOnly)).map((g) => ['game:' + g.type, g.emoji, g.name]);
+    const items = w.group ? games : [
+      ['ttt', '🎮', 'Ta-te-ti'], ...games, ['wb', '🎨', 'Pizarra'], ['loc', '📍', 'Mi ubicación'], ['live', '📡', 'Ubicación en vivo (15 min)'], ['buzz', '📳', 'Zumbido'],
       ...(w.via === 'user' && api.schedule ? [['sched', '🕒', 'Programar mensaje']] : []),
-    ].map(([k, e, l]) => `<button type="button" data-tool="${k}"><span>${e}</span>${esc(t(l))}</button>`).join('');
+    ];
+    box.innerHTML = (w.group ? `<small class="dm-tools-title">${esc(t('Juegos para el grupo'))}</small>` : '') + items.map(([k, e, l]) => `<button type="button" data-tool="${k}"><span>${e}</span>${esc(t(l))}</button>`).join('');
     (anchor?.closest('form') || document.body).appendChild(box);
     const close = (ev) => { if (!box.contains(ev.target) && ev.target !== anchor) { box.remove(); document.removeEventListener('pointerdown', close, true); } };
     setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
@@ -209,6 +212,7 @@ export function createTools(api) {
       const k = b.dataset.tool;
       if (k === 'sched') return scheduleDialog(w);
       if (!connected(w)) return toast(t('Estas herramientas necesitan que estén conectados.'));
+      if (k.startsWith('game:')) return api.games.create(w, k.slice(5));
       if (k === 'ttt') tttStart(w);
       if (k === 'wb') wbOpen(w);
       if (k === 'loc') locShare(w, false);

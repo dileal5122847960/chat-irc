@@ -123,7 +123,18 @@ export function createGroups(ctx) {
    * Envía un mensaje (texto, sticker, reacción, borrado) a todos los miembros.
    * Devuelve true si salió hacia alguien (o si estoy solo en el grupo).
    */
-  async function send(id, msg) {
+  /**
+   * opts.live: solo a los dispositivos conectados, sin buzón ni avisos (juegos, dibujos).
+   * opts.to: solo a ese miembro (número). Los envíos «live» salen en orden (cola por grupo).
+   */
+  function send(id, msg, opts = {}) {
+    if (!opts.live) return sendNow(id, msg, opts);
+    const g = groups.get(id);
+    if (!g) return Promise.resolve(false);
+    g.queue = (g.queue || Promise.resolve()).then(() => sendNow(id, msg, opts)).catch(() => false);
+    return g.queue;
+  }
+  async function sendNow(id, msg, opts = {}) {
     const g = groups.get(id);
     if (!g?.ch) return false;
     const devs = await devices(g);
@@ -132,9 +143,11 @@ export function createGroups(ctx) {
     const items = [];
     for (const d of devs) {
       if (Number(d.device) === myDev) continue;
+      if (opts.to != null && String(d.user_number) !== String(opts.to)) continue;
+      if (opts.live && !g.online.has(String(d.device))) continue;
       try { items.push({ device: Number(d.device), number: String(d.user_number), body: await mailbox.seal(d.public_key, body) }); } catch { /* clave no válida */ }
     }
-    if (!items.length) return g.members.length <= 1 || devs.length > 0;
+    if (!items.length) return opts.live || g.members.length <= 1 || devs.length > 0;
     const live = items.filter((i) => g.online.has(String(i.device)));
     const away = items.filter((i) => !g.online.has(String(i.device)));
     let ok = false;
