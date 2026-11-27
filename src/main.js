@@ -11,6 +11,7 @@ import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
 import { mountAds } from './ads.js';
+import { createPolls } from './polls.js';
 import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from './profile.js';
 
 setLang(initialLang());
@@ -825,6 +826,8 @@ function addMessage(key, m) {
   const w = state.windows.get(key);
   if (!w) return;
   addHtml(key, formatMessage(w, m), { count: m.from !== state.clientId, mention: mentionsMe(m) });
+  (w.raw ||= []).push({ nick: m.nick, body: m.body }); // texto plano reciente (para el resumen con IA)
+  if (w.raw.length > 300) w.raw.shift();
 }
 function sys(key, html, kind = 'info') {
   const w = state.windows.get(key);
@@ -1051,6 +1054,8 @@ async function joinChannel(name) {
   on('deleted', (d) => applyDeleted(w, d));
   on('rekey', (r) => applyRekey(w, r));
   on('gc', (g) => gc.onSignal(w, g));
+  on('poll', (p) => polls.onPoll(w, p));
+  on('vote', (v) => polls.onVote(w, v));
   rt.on('presence', { event: 'sync' }, () => {
     const people = new Map();
     for (const [cid, metas] of Object.entries(rt.presenceState())) {
@@ -1276,6 +1281,8 @@ function channelMenu(anchor) {
   const items = [];
   if (iAmPermAdmin(w)) items.push({ label: 'Editar tema', icon: 'edit', onClick: () => editTopic(w) });
   items.push({ label: participantsInCall(w) ? 'Unirse a la videollamada' : 'Iniciar videollamada grupal', icon: 'video', onClick: () => gc.join(w) });
+  items.push({ label: 'Crear encuesta', icon: 'sparkle', onClick: () => polls.create(w) });
+  items.push({ label: 'Resumir lo que me perdí', icon: 'message', hint: 'Summarizer' in self ? t('Con la IA de tu navegador, sin enviar nada') : t('Necesita Chrome con IA integrada'), disabled: !('Summarizer' in self), onClick: () => summarize(w) });
   items.push({ label: 'Ver administradores', icon: 'shield', onClick: () => adminsDialog(w) });
   items.push({ label: 'Copiar enlace del canal', icon: 'link', onClick: () => navigator.clipboard?.writeText(location.origin + '/#' + w.name.slice(1)).then(() => toast('Enlace copiado')) });
   items.push({ label: 'Exportar a PDF', icon: 'pdf', onClick: () => exportPdf(w) });
@@ -1650,3 +1657,19 @@ const friends = createFriends({
   },
 });
 
+/* ---------- Encuestas en canales ---------- */
+const polls = createPolls({ state, esc, t, addHtml, emit, openDialog, toast });
+
+/* ---------- Resumen con la IA del navegador (Chrome «Summarizer»: gratis y sin enviar nada) ---------- */
+async function summarize(w) {
+  const text = (w.raw || []).slice(-150).map((m) => `${m.nick}: ${m.body}`).join('\n');
+  if (text.length < 200) return toast(t('Todavía hay pocos mensajes para resumir.'));
+  toast(t('Resumiendo… puede tardar unos segundos.'));
+  try {
+    const av = await self.Summarizer.availability();
+    if (av === 'unavailable') return toast(t('Tu navegador no tiene la IA de resúmenes disponible.'));
+    const sm = await self.Summarizer.create({ type: 'tldr', format: 'plain-text', length: 'medium', sharedContext: t('Conversación de un canal de chat') });
+    const out = await sm.summarize(text);
+    openDialog({ title: t('Resumen de {canal}', { canal: w.name }), text: esc(out).replace(/\n/g, '<br>'), confirm: t('Aceptar') });
+  } catch { toast(t('No se pudo resumir ahora.')); }
+}

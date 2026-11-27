@@ -190,6 +190,10 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
 - **Apariencia:** color de la app (`ACCENTS` en profile.js), dos columnas en la app con ancho ≥ 880 px, bienvenida de
   3 pantallas (localStorage `onboarded`), stickers animados de ChamuFlac (`cf-*` en emoji.js), bloqueo con PIN en la app
   (hash local `pin:<uid>`; se pide al abrir y tras 1 min en segundo plano). Huella dactilar: pendiente (plugin nativo).
+- **Canales:** encuestas (`src/polls.js`, eventos `poll`/`vote`, sin BD) y «Resumir lo que me perdí» con la IA integrada de
+  Chrome (`Summarizer`, en el dispositivo; desactivado si el navegador no la tiene).
+- **Mensajes programados** (privados con amigos): localStorage `sched:<número>`, se envían a su hora con la app abierta o
+  en segundo plano (por el buzón si el amigo no está).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).

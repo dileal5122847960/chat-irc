@@ -952,3 +952,13 @@ button.once:hover { border-color: var(--dm-accent); }
 .qr-num { text-align: center; font-weight: 700; letter-spacing: .08em; }
 .m-qr-row, .fr-qr { display: flex; gap: 8px; padding: 4px 16px 6px; flex-wrap: wrap; }
 .fr-qr { padding: 6px 0 0; }
+/* Encuestas */
+.poll-row { padding: 6px 20px; }
+.poll { max-width: 420px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: grid; gap: 6px; }
+.poll-head b, .poll-head small { display: block; }
+.poll-head small { color: var(--muted); font-size: .78rem; }
+.poll-opt { position: relative; display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; text-align: left; }
+.poll-opt.mine { border-color: var(--accent); font-weight: 700; }
+.poll-bar { position: absolute; inset: 0 auto 0 0; background: var(--active); transition: width .3s; }
+.poll-txt, .poll-pct { position: relative; }
+.poll-pct { color: var(--muted); font-size: .85rem; }

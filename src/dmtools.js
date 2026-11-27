@@ -193,11 +193,11 @@ export function createTools(api) {
   /** Menú «+» del privado. */
   function openMenu(w, anchor) {
     document.querySelector('.dm-tools')?.remove();
-    if (!connected(w)) return toast(t('Estas herramientas necesitan que estén conectados.'));
     const box = document.createElement('div');
     box.className = 'dm-tools';
     box.innerHTML = [
       ['ttt', '🎮', 'Ta-te-ti'], ['wb', '🎨', 'Pizarra'], ['loc', '📍', 'Mi ubicación'], ['live', '📡', 'Ubicación en vivo (15 min)'], ['buzz', '📳', 'Zumbido'],
+      ...(w.via === 'user' && api.schedule ? [['sched', '🕒', 'Programar mensaje']] : []),
     ].map(([k, e, l]) => `<button type="button" data-tool="${k}"><span>${e}</span>${esc(t(l))}</button>`).join('');
     (anchor?.closest('form') || document.body).appendChild(box);
     const close = (ev) => { if (!box.contains(ev.target) && ev.target !== anchor) { box.remove(); document.removeEventListener('pointerdown', close, true); } };
@@ -207,12 +207,41 @@ export function createTools(api) {
       if (!b) return;
       box.remove();
       const k = b.dataset.tool;
+      if (k === 'sched') return scheduleDialog(w);
+      if (!connected(w)) return toast(t('Estas herramientas necesitan que estén conectados.'));
       if (k === 'ttt') tttStart(w);
       if (k === 'wb') wbOpen(w);
       if (k === 'loc') locShare(w, false);
       if (k === 'live') locShare(w, true);
       if (k === 'buzz') api.sendBuzz(w);
     };
+  }
+
+  /** Programar un mensaje (lo envía dm.js a la hora indicada). */
+  function scheduleDialog(w) {
+    document.querySelector('.sched-wrap')?.remove();
+    const min = new Date(Date.now() + 2 * 60000);
+    const local = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const wrap = document.createElement('div');
+    wrap.className = 'dialog-wrap sched-wrap';
+    wrap.innerHTML = `<form class="dialog m-dialog"><h3>🕒 ${esc(t('Programar mensaje'))}</h3>
+      <p class="muted small">${esc(t('Se enviará a esa hora si ChamuFlac está abierto o en segundo plano en este dispositivo. Si tu amigo no está conectado, le llega igual (cifrado).'))}</p>
+      <label>${esc(t('Mensaje'))}<textarea name="text" rows="3" maxlength="1000" required></textarea></label>
+      <label>${esc(t('Fecha y hora'))}<input type="datetime-local" name="at" value="${local(new Date(Date.now() + 60 * 60000))}" min="${local(min)}" required></label>
+      <p class="error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="btn" data-x>${esc(t('Cancelar'))}</button><button class="btn primary">${esc(t('Programar'))}</button></div></form>`;
+    document.body.appendChild(wrap);
+    const form = wrap.querySelector('form');
+    wrap.querySelector('[data-x]').onclick = () => wrap.remove();
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const text = form.text.value.trim(), at = new Date(form.at.value).getTime();
+      if (!text) return;
+      if (!(at > Date.now() + 30000)) { form.querySelector('[role=alert]').textContent = t('Elige una hora futura.'); return; }
+      api.schedule(w, text, at);
+      wrap.remove();
+    };
+    form.text.focus();
   }
 
   return { onData, bubble, openMenu };

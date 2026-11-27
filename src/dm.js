@@ -311,7 +311,7 @@ export function createDM(ctx) {
   // Con amigos el chat queda limpio, como en una app de mensajería: sin avisos de conexión,
   // reconexión ni errores (el estado se ve en la cabecera y en las marcas). Solo las llamadas.
   function sysLine(w, html, kind = 'info') {
-    if (w.via === 'user' && !/📞|📹|📳|⏱|🎨/.test(html)) return;
+    if (w.via === 'user' && !/📞|📹|📳|⏱|🎨|🕒/.test(html)) return;
     ctx.sys(w.key, html, kind);
   }
 
@@ -839,6 +839,34 @@ export function createDM(ctx) {
     for (let i = 0; i < 12; i++) groups.push(String(((bytes[i * 2] << 8) | bytes[i * 2 + 1]) % 100000).padStart(5, '0'));
     return groups.join(' ');
   }
+
+  /* --- Mensajes programados (amigos): se guardan en este dispositivo hasta su hora --- */
+  const SCHED = 'sched:' + (ctx.myNumber?.() || 'x');
+  const schedList = () => { try { return JSON.parse(localStorage.getItem(SCHED) || '[]'); } catch { return []; } };
+  const schedSave = (l) => { try { localStorage.setItem(SCHED, JSON.stringify(l)); } catch { /* nada */ } };
+  const fmtWhen = (at) => new Date(at).toLocaleString(getLang(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  function schedule(w, text, at) {
+    const it = { id: crypto.randomUUID().slice(0, 10), cid: w.peer.cid, nick: w.peer.nick, text: text.slice(0, 1000), at };
+    schedSave([...schedList(), it]);
+    sysLine(w, `🕒 ${esc(t('Programado para el {cuando}:', { cuando: fmtWhen(at) }))} «<span class="ugc">${esc(it.text.slice(0, 80))}</span>» <button type="button" class="link" data-sched-cancel="${it.id}">${esc(t('Cancelar'))}</button>`);
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sched-cancel]');
+    if (!b) return;
+    schedSave(schedList().filter((x) => x.id !== b.dataset.schedCancel));
+    b.replaceWith(Object.assign(document.createElement('i'), { textContent: t('(cancelado)') }));
+  });
+  setInterval(() => {
+    const now = Date.now(), list = schedList();
+    const due = list.filter((x) => x.at <= now);
+    if (!due.length) return;
+    schedSave(list.filter((x) => x.at > now));
+    for (const it of due) {
+      let w = state.windows.get('dm:' + it.cid);
+      if (!w) { w = makeWindow({ cid: it.cid, nick: it.nick, reg: true, via: 'user' }, crypto.randomUUID(), 'caller'); setStatus(w, 'offline'); }
+      sendText(w, it.text);
+    }
+  }, 15000);
 
   /* --- Buscar en la conversación --- */
   function openSearch() {
@@ -1601,7 +1629,7 @@ export function createDM(ctx) {
   };
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
-  const tools = createTools({ state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast, sendBuzz });
+  const tools = createTools({ state, sendJSON, addMessage, rerender, sysLine, esc, icon, t, toast, sendBuzz, schedule });
   return {
     openTools: (w, anchor) => tools.openMenu(w, anchor),
     init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile,
