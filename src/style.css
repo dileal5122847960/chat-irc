@@ -995,3 +995,51 @@ button.once:hover { border-color: var(--dm-accent); }
 .mod-list li > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; color: var(--text); }
 .mod-list li.done { opacity: .6; }
 .mod-list q { font-size: .82rem; color: var(--muted); white-space: pre-wrap; border-left: 3px solid var(--border); padding-left: 6px; quotes: none; }
+
+/* ---------- Momentos ---------- */
+.mo-strip { display: flex; gap: 12px; overflow-x: auto; padding: 10px 14px 8px; scrollbar-width: none; }
+.mo-strip::-webkit-scrollbar { display: none; }
+#mo-slot .mo-strip { padding: 4px 10px 6px; gap: 8px; }
+.mo-item { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 64px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.mo-item small { font-size: .7rem; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.mo-ring { position: relative; padding: 2px; border-radius: 50%; background: conic-gradient(from 200deg, #f59e0b, #e11d48, #7c3aed, #f59e0b); }
+.mo-ring.seen { background: var(--border); }
+.mo-ring.add { background: none; }
+.mo-ring .avatar { width: 52px; height: 52px; font-size: .9rem; border: 2px solid var(--panel, #fff); }
+#mo-slot .mo-ring .avatar { width: 42px; height: 42px; }
+.mo-plus { position: absolute; right: -2px; bottom: -2px; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; border: 2px solid var(--panel, #fff); }
+.mo-plus svg { width: 12px; height: 12px; }
+.mo-viewer { position: fixed; inset: 0; z-index: 300; background: #000; display: grid; place-items: center; animation: fade .15s; }
+.mo-stage { position: relative; width: min(100vw, 480px); height: min(100dvh, 860px); background: var(--mo-bg, #e11d48); display: flex; flex-direction: column; overflow: hidden; color: #fff; user-select: none; }
+@media (min-width: 520px) { .mo-stage { border-radius: 14px; } }
+.mo-bars { display: flex; gap: 4px; padding: calc(10px + var(--sat, 0px)) 10px 0; position: relative; z-index: 3; }
+.mo-bars i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .35); overflow: hidden; }
+.mo-bars i.done b, .mo-bars i b { display: block; height: 100%; background: #fff; }
+.mo-bars i b { width: 0; }
+.mo-bars i.done b { width: 100%; }
+.mo-bars i.now b { animation: mo-fill linear forwards; }
+.mo-stage.paused .mo-bars i.now b { animation-play-state: paused; }
+@keyframes mo-fill { to { width: 100%; } }
+.mo-top { display: flex; align-items: center; gap: 10px; padding: 10px 12px; position: relative; z-index: 3; }
+.mo-top > span { flex: 1; display: flex; flex-direction: column; line-height: 1.2; }
+.mo-top small { opacity: .8; font-size: .75rem; }
+.mo-top .icon-btn { color: #fff; }
+.mo-body { flex: 1; display: grid; place-items: center; position: relative; min-height: 0; }
+.mo-photo { position: absolute; inset: 0; display: grid; place-items: center; background: #000; }
+.mo-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.mo-text { position: relative; z-index: 2; margin: 0; padding: 20px 28px; font-size: 1.6rem; font-weight: 700; text-align: center; line-height: 1.3; white-space: pre-wrap; word-break: break-word; }
+.mo-text.over { align-self: end; font-size: 1.1rem; font-weight: 600; background: rgba(0, 0, 0, .45); border-radius: 12px; margin: 0 14px 70px; padding: 10px 14px; }
+.mo-spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .3); border-top-color: #fff; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.mo-nav { position: absolute; top: 80px; bottom: 70px; width: 35%; border: 0; background: none; z-index: 1; cursor: pointer; }
+.mo-nav.prev { left: 0; } .mo-nav.next { right: 0; }
+.mo-views { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--sab, 0px)); z-index: 3; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 8px 14px; background: rgba(0, 0, 0, .45); color: #fff; font: inherit; cursor: pointer; }
+.mo-views svg { width: 16px; height: 16px; }
+.mo-preview { height: 260px; border-radius: 14px; background: var(--mo-bg) center / cover no-repeat; display: grid; place-items: center; padding: 14px; margin: 10px 0; }
+.mo-preview textarea { width: 100%; border: 0; outline: 0; resize: none; background: none; color: #fff; font: inherit; font-size: 1.3rem; font-weight: 700; text-align: center; height: 130px; }
+.mo-preview textarea::placeholder { color: rgba(255, 255, 255, .75); }
+.mo-preview.has-photo textarea { align-self: end; height: 70px; font-size: 1rem; background: rgba(0, 0, 0, .45); border-radius: 10px; padding: 8px; }
+.mo-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mo-bgs { display: flex; gap: 6px; }
+.mo-bgs button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.mo-bgs button.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--panel, #fff) inset; }

@@ -13,6 +13,7 @@ import { createMailbox } from './mailbox.js';
 import { createGroups } from './groups.js';
 import { captchaToken } from './captcha.js';
 import { createModeration } from './moderation.js';
+import { createMoments } from './moments.js';
 import { webPushState, webPushToken, webPushOff, onWebPushTap } from './webpush.js';
 import { mountAds } from './ads.js';
 import { createPolls } from './polls.js';
@@ -507,7 +508,7 @@ function enterChat(nick, registered, channel) {
   photos.setOwner(registered ? state.account?.id : null);
   loadIceServers(SUPABASE_URL, SUPABASE_KEY); // credenciales TURN para privados y videollamadas
   if (registered && state.account?.id) {
-    mailbox.register(state.account.id).then(() => { groups.start(); fetchMail(); for (const d of pendingTaps.splice(0)) handlePushTap(d); }); // dispositivo, versión y clave del buzón; luego, grupos
+    mailbox.register(state.account.id).then(() => { groups.start(); moments.start(); fetchMail(); for (const d of pendingTaps.splice(0)) handlePushTap(d); }); // dispositivo, versión y clave del buzón; luego, grupos
     if (webPushOn()) webPushToken().then((tok) => tok && mailbox.register(state.account.id, tok)); // avisos del navegador (si ya se activaron)
   }
   renderClient();
@@ -526,6 +527,7 @@ function renderClient() {
       <div class="side-section">
         <nav id="nav-browse"></nav>
         <div id="ad-slot"></div>
+        ${state.registered ? `<div class="side-label spaced">${esc(t('Momentos'))}</div><div id="mo-slot"></div>` : ''}
         <div class="side-label spaced">Tus canales</div>
         <nav id="chan-list"></nav>
         <div class="side-label spaced" id="dm-label">Privados</div>
@@ -1493,6 +1495,7 @@ async function quitChat() {
   closeOverlays();
   friends.stop();
   groups.stop();
+  moments.stop();
   dm.closeAll();
   for (const w of state.windows.values()) if (w.rt && w.kind !== 'dm') await supabase.removeChannel(w.rt);
   state.windows.clear();
@@ -1737,6 +1740,23 @@ const friends = createFriends({
     if (b) { b.textContent = n || ''; b.classList.toggle('hidden', !n); }
   },
 });
+
+/* ---------- Momentos (24 h, solo amigos) ---------- */
+const moments = createMoments({
+  supabase, mailbox, t, esc, icon, toast,
+  myNumber: () => state.account?.number, myNick: () => state.nick,
+  avatar: (p) => (p.me ? photos.avatar('me', p.nick) : photos.avatar('u:' + p.number, p.nick)),
+  menu: (anchor, items) => openMenu(anchor, items.map((it) => (it === '-' ? it : { ...it, onClick: it.act }))),
+  confirm: (text) => openDialog({ title: text, confirm: t('Borrar'), danger: true }),
+  info: async (title, html) => { await openDialog({ title, text: html, confirm: t('Cerrar') }); },
+  onChange: () => renderMoments(),
+});
+function renderMoments() {
+  const el = document.getElementById('mo-slot');
+  if (el) el.innerHTML = moments.stripHtml();
+}
+document.addEventListener('click', (e) => { if (e.target.closest('#mo-slot')) moments.onStripClick(e); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.registered) moments.load(); });
 
 /* ---------- Moderación de canales ---------- */
 const mod = createModeration({

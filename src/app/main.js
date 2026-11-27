@@ -18,6 +18,7 @@ import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
 import { createGroups } from '../groups.js';
 import { captchaToken } from '../captcha.js';
+import { createMoments } from '../moments.js';
 import { mountAds } from '../ads.js';
 import { qrSvg, scanQR, friendLink, numberFromQr } from '../qr.js';
 import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch, ACCENTS, accentSwatch } from '../profile.js';
@@ -276,6 +277,7 @@ async function logout() {
   const id = Number(store.get('deviceId:' + state.account?.id)) || null;
   if (id) await supabase.from('devices').update({ push_token: null }).eq('id', id); // sin avisos en este teléfono
   groups?.stop();
+  moments?.stop();
   dm?.closeAll();
   state.ready = false;
   state.account = null;
@@ -289,6 +291,7 @@ async function logout() {
 /* ===================================================================== */
 let dm = null;
 let groups = null;
+let moments = null;
 function enterApp() {
   const a = state.account;
   state.clientId = String(a.number);
@@ -307,9 +310,18 @@ function enterApp() {
     onChange: () => renderLists(),
   });
   dctx.groups = groups;
+  moments = createMoments({
+    supabase, mailbox, t, esc, icon, toast,
+    myNumber: () => state.clientId, myNick: () => state.nick,
+    avatar: (p) => (p.me ? photos.avatar('me', p.nick) : photos.avatar('u:' + p.number, p.nick)),
+    menu: (anchor, items) => openMenu(anchor, items.map((it) => (it === '-' ? it : { ...it, run: it.act }))),
+    confirm: (text) => openDialog({ title: text, confirm: t('Borrar'), danger: true }),
+    info: async (title, html) => { await openDialog({ title, text: html, confirm: t('Cerrar') }); },
+    onChange: () => renderLists(),
+  });
   dm.init();
   state.ready = true;
-  mailbox.register(state.account.id).then(() => { groups.start(); fetchMail(); }); // dispositivo + clave del buzón; luego, grupos y mensajes pendientes
+  mailbox.register(state.account.id).then(() => { groups.start(); moments.start(); fetchMail(); }); // dispositivo + clave del buzón; luego, grupos y mensajes pendientes
   loadFriends().then(() => { for (const d of state.pendingTaps.splice(0)) handleTap(d); });
   initPush({ onToken: (token) => mailbox.register(state.account.id, token), onTap: handleTap });
   if (!store.get('onboarded')) showOnboarding();
@@ -634,12 +646,12 @@ addEventListener('resize', () => renderLists());
 function chatsHtml(chats) {
   const newGroup = `<button class="m-new-group" data-new-group>${icon('users')}<span>${esc(t('Nuevo grupo'))}</span></button>`;
   if (!chats.length) {
-    return newGroup + `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
+    return moments.stripHtml() + newGroup + `<div class="m-empty">${icon('message')}<p><b>Aún no hay conversaciones</b></p>
       <p class="muted">Toca a un amigo para hablar. Las conversaciones no se guardan en ningún servidor.</p>
       <button class="btn small" data-goto="friends">Ver amigos</button></div>`;
   }
   // Lo más reciente arriba
-  return newGroup + [...chats].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).map((w) => {
+  return moments.stripHtml() + newGroup + [...chats].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0)).map((w) => {
     const last = [...w.msgs.values()].pop();
     const sub = last ? (last.mine ? '✓ ' : w.group && last.nick ? last.nick + ': ' : '') + previewText(last) : dm.statusText(w);
     const av = w.group ? `<span class="avatar grp">${icon('users')}</span>` : `${photos.avatar((w.via === 'user' ? 'u:' : 't:') + w.peer.cid, w.peer.nick)}<i class="dm-dot ${w.status}"></i>`;
@@ -688,6 +700,7 @@ function friendsHtml(incoming) {
 const fmtNumber = (n) => String(n || '').replace(/(\d{4})(\d{4})/, '$1 $2');
 
 async function onListClick(e) {
+  if (moments?.onStripClick(e)) return;
   const b = e.target.closest('button');
   if (!b) return;
   const d = b.dataset;
@@ -797,6 +810,7 @@ function onResume() {
   loadFriends();
   fetchMail();
   groups?.load();
+  moments?.load();
   const w = state.windows.get(state.active);
   if (w) { w.unread = 0; clearNotifications(w.peer.cid); renderLists(); }
   if (Date.now() - lastVersionCheck > 10 * 60 * 1000) checkVersion().then((v) => {
