@@ -567,7 +567,7 @@ function renderClient() {
           <button type="button" class="icon-btn dm-only" id="emoji-btn" title="Emojis y stickers">${icon('smile')}</button>
           <button type="button" class="icon-btn dm-only" id="attach-btn" title="Enviar foto, vídeo o documento">${icon('clip')}</button>
             <button type="button" class="icon-btn dm-only" id="tools-btn" title="Juegos, pizarra, ubicación y zumbido">${icon('plus')}</button>
-            <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Ver una vez: la próxima foto, vídeo o audio se podrá abrir una sola vez"><span class="once-ico">1</span></button>
+            <button type="button" class="icon-btn dm-only once-btn" id="once-btn" title="Una sola vez: la próxima foto o vídeo se podrá ver una vez, y el audio, escuchar una vez"><span class="once-ico">1</span></button>
           <input id="input" autocomplete="off" spellcheck="true" maxlength="${MAX_MSG}" placeholder="Escribe un mensaje…">
           <button type="button" class="icon-btn dm-only" id="mic-btn" title="Grabar nota de voz">${icon('mic')}</button>
           <button class="send" type="submit" title="Enviar">${icon('send')}</button>
@@ -1545,7 +1545,7 @@ const dmCtx = {
   photos, // foto de perfil (solo privados): viaja directamente entre las dos personas
   onOnceChange: (on) => {
     document.getElementById('once-btn')?.classList.toggle('on', on);
-    if (on) toast(t('La próxima foto, vídeo o audio se podrá ver una sola vez.'));
+    if (on) toast(t('La próxima foto o vídeo se podrá ver una sola vez, y el próximo audio, escuchar una sola vez.'));
   },
   myProfile: () => (state.registered && state.account ? { first: state.account.firstName, last: state.account.lastName, attitude: state.account.attitude } : null),
   onPeerProfile: (w, p) => { if (w.via === 'user') friends.updateLocal(w.peer.cid, p); },

@@ -995,12 +995,17 @@ export function createDM(ctx) {
   /** Botones Compartir y Guardar de un archivo recibido o enviado. */
   const fileActions = (f) => (f.blob ? `<span class="fact">${ctx.canShareFiles?.() ?? canShareDefault() ? `<button type="button" class="fact-btn" data-fshare="${esc(f.fid)}" title="Compartir">${icon('share')}</button>` : ''}<button type="button" class="fact-btn" data-fsave="${esc(f.fid)}" title="Guardar">${icon('download')}</button></span>` : '');
   function onceHtml(w, m, f) {
-    const what = f.kind === 'image' ? 'Foto' : f.kind === 'video' ? 'Vídeo' : 'Audio';
+    // Textos según el tipo: el audio se escucha; la foto y el vídeo se ven
+    const L = {
+      image: { title: 'Foto para ver una vez', done: 'Vista', pending: 'Sin ver', open: 'Ver foto (una sola vez)', note: 'Se borrará después de verla' },
+      video: { title: 'Vídeo para ver una vez', done: 'Visto', pending: 'Sin ver', open: 'Ver vídeo (una sola vez)', note: 'Se borrará después de verlo' },
+      audio: { title: 'Audio para escuchar una vez', done: 'Escuchado', pending: 'Sin escuchar', open: 'Escuchar (una sola vez)', note: 'Se borrará después de escucharlo' },
+    }[f.kind === 'image' || f.kind === 'video' ? f.kind : 'audio'];
     const ico = `<span class="once-ico">1</span>`;
-    if (m.mine) return `<div class="once mine">${ico}<span><b>${esc(t(what + ' para ver una vez'))}</b><small>${esc(t(f.opened ? 'Abierta' : !f.url ? 'Enviando…' : 'Sin abrir'))}</small></span></div>`;
-    if (!f.url) return `<div class="once">${ico}<span><b>${esc(t(what + ' para ver una vez'))}</b><small>${ring(f.fid)}</small></span></div>`;
-    if (f.opened) return `<div class="once opened">${ico}<span><b>${esc(t(what + ' para ver una vez'))}</b><small>${esc(t('Abierta'))}</small></span></div>`;
-    return `<button type="button" class="once" data-once="${esc(f.fid)}">${ico}<span><b>${esc(t(f.kind === 'audio' ? 'Escuchar (una sola vez)' : f.kind === 'video' ? 'Ver vídeo (una sola vez)' : 'Ver foto (una sola vez)'))}</b><small>${esc(t('Se borrará después de abrirla'))}</small></span></button>`;
+    if (m.mine) return `<div class="once mine">${ico}<span><b>${esc(t(L.title))}</b><small>${esc(t(f.opened ? L.done : !f.url ? 'Enviando…' : L.pending))}</small></span></div>`;
+    if (!f.url) return `<div class="once">${ico}<span><b>${esc(t(L.title))}</b><small>${ring(f.fid)}</small></span></div>`;
+    if (f.opened) return `<div class="once opened">${ico}<span><b>${esc(t(L.title))}</b><small>${esc(t(L.done))}</small></span></div>`;
+    return `<button type="button" class="once" data-once="${esc(f.fid)}">${ico}<span><b>${esc(t(L.open))}</b><small>${esc(t(L.note))}</small></span></button>`;
   }
   function fileHtml(w, m, f) {
     if (f.once) return onceHtml(w, m, f);
