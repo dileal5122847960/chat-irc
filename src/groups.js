@@ -83,7 +83,7 @@ export function createGroups(ctx) {
     ch.on('broadcast', { event: 'm' }, ({ payload }) => onMessage(g, payload))
       .on('broadcast', { event: 'r' }, ({ payload: p }) => { if (p && isMember(g, p.from)) dm().groupReceipt(g, String(p.from), p.t === 'read' ? 'read' : 'ack', p.mids); })
       .on('broadcast', { event: 'ty' }, ({ payload: p }) => { if (p && isMember(g, p.from)) dm().groupTyping(g, String(p.from)); })
-      .on('broadcast', { event: 'meta' }, () => load())
+      .on('broadcast', { event: 'meta' }, () => setTimeout(load, 2000)) // tras el cambio (quien sale avisa antes de salir)
       .on('presence', { event: 'sync' }, () => { g.online = new Set(Object.keys(ch.presenceState()).map((k) => k.split(':')[1])); })
       .subscribe((status) => { if (status === 'SUBSCRIBED') ch.track({ at: Date.now() }); });
   }

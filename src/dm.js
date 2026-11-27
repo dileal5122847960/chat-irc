@@ -282,6 +282,7 @@ export function createDM(ctx) {
   }
   function renderHeader(w) {
     if (w.group) return renderGroupHeader(w);
+    for (const id of ['call-audio', 'call-video']) document.getElementById(id)?.classList.remove('grp-hide');
     document.getElementById('win-name').innerHTML = `${peerAvatar(w)}<span class="dm-title-nick" style="${nickStyle(w.peer.nick)}">${esc(w.peer.nick)}</span>${w.peer.reg ? verified : ''}`;
     document.getElementById('topic').innerHTML = `<span class="dm-status ${w.status} ${w.relay ? 'relay' : ''}">${w.status === 'open' ? icon(w.relay ? 'unlock' : 'lock') : ''}${esc(statusText(w))}</span>`;
     const open = w.status === 'open' && !w.relay; // las llamadas necesitan conexión directa
@@ -1688,8 +1689,7 @@ export function createDM(ctx) {
     document.getElementById('topic').innerHTML = typing
       ? `<span class="dm-status open"><span class="ugc">${esc(typing)}</span> ${esc(t('está escribiendo…'))}</span>`
       : `<span class="dm-status open grp-members">${icon('lock')}<span class="ugc">${esc([t('Tú'), ...names].join(', '))}</span></span>`;
-    document.getElementById('call-audio').disabled = true;
-    document.getElementById('call-video').disabled = true;
+    for (const id of ['call-audio', 'call-video']) { const b = document.getElementById(id); b.disabled = true; b.classList.add('grp-hide'); }
   }
   function syncGroupComposer(w) {
     const input = document.getElementById('input');
@@ -1728,7 +1728,7 @@ export function createDM(ctx) {
     } else if (m.t === 'sticker' && STICKERS.includes(m.id)) {
       msg = { mid, mine, from, nick, kind: 'sticker', sticker: m.id, ts, ...inExtras(m, ts) };
     } else return;
-    if (w.typing?.from === from) w.typing = null;
+    if (w.typing?.from === from) { w.typing = null; if (state.active === w.key) renderHeader(w); }
     addMessage(w, msg);
     if (mine) return;
     ctx.groups?.receipt(g.id, 'ack', [mid]);

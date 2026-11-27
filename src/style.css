@@ -979,3 +979,7 @@ button.once:hover { border-color: var(--dm-accent); }
 .m-new-group svg, .side-new-group svg { width: 20px; height: 20px; }
 .side-new-group { padding: 6px 10px; font-size: .88rem; border-radius: 8px; }
 .side-new-group:hover, .m-new-group:hover { background: var(--hover, rgba(127, 127, 127, .1)); }
+.grp-hide { display: none !important; }
+.dm-status.grp-members { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.dm-status.grp-members svg { flex: none; }
+.chan.dm .avatar.grp svg { width: 70%; height: 70%; stroke-width: 2.4; }

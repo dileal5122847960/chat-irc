@@ -961,6 +961,7 @@ function activate(key) {
   const isDm = w.kind === 'dm';
   document.getElementById('app').classList.toggle('in-dm', isDm);
   document.getElementById('call-audio').classList.toggle('hidden', !isDm);
+  if (!w.group) ['call-audio', 'call-video'].forEach((id) => document.getElementById(id).classList.remove('grp-hide'));
   document.getElementById('call-video').classList.toggle('hidden', key === 'status');
   document.getElementById('call-video').title = isDm ? 'Videollamada' : 'Videollamada grupal';
   gc.renderBanner(w);
