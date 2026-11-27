@@ -24,7 +24,13 @@ export const photos = {
   /** Cuenta actual (para guardar «mi foto» por cuenta en este dispositivo). */
   setOwner(id) { owner = id || 'guest'; },
   mine: () => store.get('myphoto:' + owner),
-  setMine(data) { store.set('myphoto:' + owner, data); listeners.forEach((f) => f('me')); },
+  /** Imagen original (sin recortar) para poder volver a ajustarla. */
+  mineSource: () => store.get('myphoto-src:' + owner),
+  setMine(data, source) {
+    store.set('myphoto:' + owner, data);
+    if (source !== undefined || !data) store.set('myphoto-src:' + owner, data ? source : null);
+    listeners.forEach((f) => f('me'));
+  },
   /** key: 'u:<número>' (amigo, se recuerda) o 't:<id>' (privado ocasional, solo esta sesión). */
   get: (key) => (key.startsWith('u:') ? store.get('photo:' + key) : session.get(key)) || null,
   set(key, data) {
@@ -102,3 +108,72 @@ export function applyDisplay() {
 
 /** Muestra de un fondo (para el menú). */
 export const wallSwatch = (k) => `<i class="wall-swatch" style="background:${k === 'foto' ? 'var(--elev)' : WALLPAPERS[k].css || 'var(--dm-bg)'}"></i>`;
+
+/* ---------------- Editor de la foto (encuadre) ---------------- */
+/**
+ * Muestra la imagen con una máscara circular: se arrastra para moverla y el control
+ * deslizante la acerca o aleja. Devuelve la foto final (cuadrada, 256 px) o null.
+ * t: función de traducción de la app.
+ */
+export function editPhoto(src, t = (s) => s) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => open();
+    img.onerror = () => resolve(null);
+    img.src = src;
+    function open() {
+      const S = 280; // tamaño del visor
+      const base = Math.max(S / img.width, S / img.height); // escala mínima que cubre el círculo
+      let zoom = 1, x = 0, y = 0; // desplazamiento en px del visor
+      const wrap = document.createElement('div');
+      wrap.className = 'dialog-wrap ph-editor-wrap';
+      wrap.innerHTML = `<div class="dialog ph-editor" role="dialog" aria-modal="true">
+        <h3>${esc(t('Ajustar foto'))}</h3>
+        <p class="muted small">${esc(t('Arrastra para moverla y usa el control para acercarla o alejarla.'))}</p>
+        <div class="ph-stage" style="width:${S}px;height:${S}px"><img alt="" draggable="false"><i class="ph-mask"></i></div>
+        <label class="ph-zoom"><span>−</span><input type="range" min="1" max="4" step="0.01" value="1" aria-label="Zoom"><span>+</span></label>
+        <div class="dialog-actions"><button type="button" class="btn" data-x>${esc(t('Cancelar'))}</button><button type="button" class="btn primary" data-ok>${esc(t('Guardar'))}</button></div>
+      </div>`;
+      document.body.appendChild(wrap);
+      const el = wrap.querySelector('.ph-stage img');
+      el.src = src;
+      const clamp = () => {
+        const w = img.width * base * zoom, h = img.height * base * zoom;
+        x = Math.min(Math.max(x, S - w), 0); y = Math.min(Math.max(y, S - h), 0);
+      };
+      const draw = () => { clamp(); el.style.width = img.width * base * zoom + 'px'; el.style.transform = `translate(${x}px, ${y}px)`; };
+      // Centrada al empezar
+      x = (S - img.width * base) / 2; y = (S - img.height * base) / 2; draw();
+      const range = wrap.querySelector('input[type=range]');
+      range.oninput = () => {
+        const cx = S / 2 - x, cy = S / 2 - y, old = zoom; // mantener el centro
+        zoom = Number(range.value);
+        x = S / 2 - cx * (zoom / old); y = S / 2 - cy * (zoom / old); draw();
+      };
+      const stage = wrap.querySelector('.ph-stage');
+      let drag = null;
+      stage.onpointerdown = (e) => { drag = { px: e.clientX, py: e.clientY, x, y }; stage.setPointerCapture(e.pointerId); };
+      stage.onpointermove = (e) => { if (!drag) return; x = drag.x + e.clientX - drag.px; y = drag.y + e.clientY - drag.py; draw(); };
+      stage.onpointerup = stage.onpointercancel = () => { drag = null; };
+      stage.onwheel = (e) => { e.preventDefault(); range.value = Math.min(4, Math.max(1, zoom - e.deltaY / 500)); range.oninput(); };
+      const done = (v) => { wrap.remove(); resolve(v); };
+      wrap.querySelector('[data-x]').onclick = () => done(null);
+      wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) done(null); });
+      wrap.querySelector('[data-ok]').onclick = () => {
+        const out = 256, k = 1 / (base * zoom); // px del visor → px de la imagen
+        const c = document.createElement('canvas');
+        c.width = c.height = out;
+        c.getContext('2d').drawImage(img, -x * k, -y * k, S * k, S * k, 0, 0, out, out);
+        done(c.toDataURL('image/jpeg', 0.82));
+      };
+    }
+  });
+}
+
+/** Elegir una foto nueva y encuadrarla. Devuelve { photo, source } o null. */
+export async function chooseAndEditPhoto(t) {
+  const source = await pickImage({ max: 1024, square: false, quality: 0.85 });
+  if (!source) return null;
+  const photo = await editPhoto(source, t);
+  return photo ? { photo, source } : null;
+}

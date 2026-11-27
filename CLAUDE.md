@@ -161,7 +161,10 @@ Saldrán muchas versiones antes de la final: **todas las apps se actualizan sola
   por el servidor**: se guarda en el dispositivo del dueño (`myphoto:<uid>`) y viaja al amigo por el DataChannel
   (mensaje `photo`, ≤90 KB, 256 px); el amigo la recuerda (`photo:u:<número>`; privados ocasionales solo en memoria).
   En canales, iniciales. Tamaño de letra (`--fs`: Normal/Grande/Muy grande) y fondo del chat (degradados o foto propia,
-  `data-wall` / `--wall`) son preferencias del dispositivo. Español de Argentina: «son amigos», «pueden» (no «sois/podéis»).
+  `data-wall` / `--wall`) son preferencias del dispositivo.
+  **Mi perfil** (app: foto en la cabecera o menú ⋮; web: menú de usuario): ver la foto, cambiarla, **ajustarla** (editor
+  `editPhoto`: arrastrar + zoom, máscara circular; se guarda el original `myphoto-src:<uid>`), quitarla, editar nombre/nick.
+  Nick y nombre se envían a los amigos conectados al instante (mensaje `profile` por el DataChannel, solo `via 'user'`). Español de Argentina: «son amigos», «pueden» (no «sois/podéis»).
 - **Identidad visual:** nombre ChamuFlac, logo y banderas en `src/brand.js`, paleta roja
   (tokens al final de `src/style.css`). Estilo de privados tipo app de mensajería (burbujas, ✓✓).
 - **Sin comandos:** todo con botones, menús (`openMenu`) y diálogos propios (`openDialog`).
@@ -207,6 +210,8 @@ cada push a `main` → trabajar en rama, probar, pedir permiso. No puedo crear e
 archivo esté en Releases). Subir `androidVersion` / `windowsVersion` en package.json en cada cambio de app.
 
 **Pendiente / ideas siguientes:**
+0. Los dispositivos se acumulan (cada navegador nuevo registra uno): `mail_send` acepta 20 copias por llamada (el cliente
+   envía en tandas). Más adelante: borrar dispositivos sin uso o limitar `friend_devices` a los más recientes.
 1. Probar privado y videollamada entre redes distintas (Wi-Fi vs datos) y revisar consumo en Metered.
 2. App de iPhone (necesita cuenta Apple Developer 99 USD/año; ver sección iOS).
 3. Guardar/descargar archivos recibidos en la app (Android WebView no descarga `blob:`): usar Filesystem/Share.

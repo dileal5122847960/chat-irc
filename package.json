@@ -29,6 +29,6 @@
     "@capacitor/splash-screen": "^8.0.2",
     "@supabase/supabase-js": "^2.119.2"
   },
-  "androidVersion": "1.0.5",
-  "windowsVersion": "1.0.1"
+  "androidVersion": "1.0.6",
+  "windowsVersion": "1.0.2"
 }

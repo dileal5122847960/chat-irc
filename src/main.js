@@ -9,7 +9,7 @@ import { esc, icon, verified, hue, nickStyle, avatar, time, linkify, linkifyRaw,
 import { APP_VERSION, startVersionCheck } from './version.js';
 import { createFriends } from './friends.js';
 import { createMailbox } from './mailbox.js';
-import { photos, pickImage, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from './profile.js';
+import { photos, pickImage, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from './profile.js';
 
 setLang(initialLang());
 applyDisplay(); // tamaño de letra y fondo elegidos en este dispositivo
@@ -682,7 +682,7 @@ function bindComposer() {
 
 function updateMe() {
   document.getElementById('me-nick').innerHTML = esc(state.nick) + (state.registered ? ' ' + verified : '');
-  document.getElementById('me-avatar').innerHTML = avatar(state.nick);
+  document.getElementById('me-avatar').innerHTML = photos.avatar('me', state.nick); // mi foto: solo la veo yo aquí y mis privados
   updateTitle();
 }
 function toggleTheme() { applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); updateThemeBtn(); }
@@ -1256,7 +1256,7 @@ function userMenu(anchor) {
   if (acc) items.push({ label: 'Amigos', icon: 'users', onClick: () => friends.open() });
   if (acc) items.push({ label: 'Nombre y apellido', hint: acc.firstName ? `${acc.firstName} ${acc.lastName}` : '', icon: 'users', onClick: editNameDialog });
   items.push(
-    { label: 'Mi foto', icon: 'image', hint: t(photos.mine() ? 'La ven en tus privados' : 'Sin foto'), onClick: () => photoMenu(anchor) },
+    { label: 'Mi perfil', lead: photos.avatar('me', state.nick), hint: acc ? `${acc.firstName} ${acc.lastName}` : t(photos.mine() ? 'La ven en tus privados' : 'Sin foto'), onClick: () => profileMenu(anchor) },
     { label: 'Tamaño de letra', icon: 'edit', hint: t(FONT_LABELS[display.font()]), onClick: () => fontMenu(anchor) },
     { label: 'Fondo del chat', icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), onClick: () => wallMenu(anchor) },
     { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
@@ -1266,20 +1266,34 @@ function userMenu(anchor) {
   if (state.registered && !myOwnChannel()) items.push({ label: 'Crear mi canal', icon: 'plus', onClick: () => { activate('status'); createChannelDialog(); } });
   items.push('-', { label: 'Salir del chat', icon: 'logout', onClick: quitChat });
   if (state.registered) items.push({ label: 'Cerrar sesión', icon: 'lock', danger: true, onClick: async () => { await quitChat(); await supabase.auth.signOut(); state.account = null; renderHome('Sesión cerrada.', 'ok'); } });
-  openMenu(anchor, items, { title: `${avatar(state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
+  openMenu(anchor, items, { title: `${photos.avatar('me', state.nick)}<span><b>${esc(state.nick)}</b><small>${state.registered ? 'Usuario registrado' : 'Invitado'}</small></span>` });
 }
 
 /* ---------- Foto (solo privados), letra y fondo ---------- */
-function photoMenu(anchor) {
+/** Mi perfil: cómo me ven en los privados (foto, nick, nombre) y opciones para cambiarlo. */
+function profileMenu(anchor) {
+  const acc = state.registered ? state.account : null;
   const has = !!photos.mine();
+  const again = () => profileMenu(anchor);
   openMenu(anchor, [
     { label: has ? 'Cambiar foto' : 'Elegir foto', icon: 'image', onClick: async () => {
-      const img = await pickImage({ max: 256, square: true, quality: 0.8 });
-      if (!img) return;
-      photos.setMine(img); dm.broadcastPhoto(); toast(t('Foto guardada. La verán en tus privados.'));
+      const r = await chooseAndEditPhoto(t);
+      if (!r) return;
+      photos.setMine(r.photo, r.source); dm.broadcastPhoto(); toast(t('Foto guardada. La verán en tus privados.'));
+      again();
     } },
-    ...(has ? [{ label: 'Quitar foto', icon: 'trash', danger: true, onClick: () => { photos.setMine(null); dm.broadcastPhoto(); } }] : []),
-  ], { title: `${photos.avatar('me', state.nick)}<span><b>${esc(t('Mi foto'))}</b><small>${esc(t('Solo se ve en los privados. No se guarda en ningún servidor.'))}</small></span>` });
+    ...(has ? [
+      { label: 'Ajustar foto', icon: 'expand', onClick: async () => {
+        const photo = await editPhoto(photos.mineSource() || photos.mine(), t);
+        if (photo) { photos.setMine(photo); dm.broadcastPhoto(); }
+        again();
+      } },
+      { label: 'Quitar foto', icon: 'trash', danger: true, onClick: () => { photos.setMine(null); dm.broadcastPhoto(); } },
+    ] : []),
+    '-',
+    ...(acc ? [{ label: 'Nombre y apellido', icon: 'users', hint: `${acc.firstName} ${acc.lastName}`, onClick: editNameDialog }] : []),
+    { label: 'Cambiar mi nick', icon: 'edit', onClick: changeNickDialog },
+  ], { title: `<div class="profile-card">${photos.avatar('me', state.nick)}<b class="ugc">${esc(state.nick)}</b>${acc ? `<span class="ugc">${esc(`${acc.firstName} ${acc.lastName}`)}</span>` : ''}<small>${esc(t('Solo se ve en los privados. No se guarda en ningún servidor.'))}</small></div>` });
 }
 function fontMenu(anchor) {
   openMenu(anchor, Object.keys(FONT_SIZES).map((k) => ({ label: FONT_LABELS[k], chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, onClick: () => display.setFont(k) })), { title: esc(t('Tamaño de letra')) });
@@ -1293,7 +1307,7 @@ function wallMenu(anchor) {
     } },
   ], { title: esc(t('Fondo del chat')) });
 }
-photos.onChange(() => { renderChanList(); const w = state.windows.get(state.active); if (w?.kind === 'dm') dm.onActivate(w); });
+photos.onChange(() => { if (document.getElementById('me-avatar')) updateMe(); renderChanList(); const w = state.windows.get(state.active); if (w?.kind === 'dm') dm.onActivate(w); });
 
 async function editNameDialog() {
   const acc = state.account;
@@ -1308,6 +1322,8 @@ async function editNameDialog() {
   const { error } = await supabase.rpc('set_my_name', { p_first: v.first, p_last: v.last });
   if (error) return toast(error.message);
   acc.firstName = v.first; acc.lastName = v.last;
+  dm.broadcastProfile(); // a los amigos conectados les llega al instante
+  friends.refresh();
   toast(t('Guardado.'));
 }
 
@@ -1344,6 +1360,7 @@ async function changeNickDialog() {
   updateMe();
   trackLobby();
   dm.onNickChange(nick);
+  dm.broadcastProfile();
   for (const w of state.windows.values()) {
     if (!w.rt || w.kind === 'dm') continue;
     w.rt.track(myPresence(w));
@@ -1385,6 +1402,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) fetc
 const dm = createDM({
   state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
   photos, // foto de perfil (solo privados): viaja directamente entre las dos personas
+  myProfile: () => (state.registered && state.account ? { first: state.account.firstName, last: state.account.lastName } : null),
+  onPeerProfile: (w, p) => { if (w.via === 'user') friends.updateLocal(w.peer.cid, p); },
   sys, addHtml, activate: (k) => activate(k),
   findPerson: (nick) => {
     for (const w of state.windows.values()) for (const p of w.people?.values() || []) if (!p.me && p.nick.toLowerCase() === nick.toLowerCase()) return { cid: p.cid, nick: p.nick, reg: p.reg };

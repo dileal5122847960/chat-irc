@@ -16,7 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_KEY } from '../config.js';
 import { createDM, loadIceServers } from '../dm.js';
 import { createMailbox } from '../mailbox.js';
-import { photos, pickImage, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from '../profile.js';
+import { photos, chooseAndEditPhoto, editPhoto, display, applyDisplay, FONT_SIZES, FONT_LABELS, WALLPAPERS, wallSwatch } from '../profile.js';
 import { t, LANGS, getLang, setLang, initialLang, startI18n, retranslate } from '../i18n.js';
 import { APP_NAME, logoSvg, flag } from '../brand.js';
 import { esc, icon, verified, nickStyle, avatar, time, linkify, beep, loopTone } from '../common.js';
@@ -301,6 +301,12 @@ function dmContext() {
     state, supabase, esc, icon, avatar, nickStyle, linkify, time, verified, toast, beep, loopTone,
     sys, addHtml, activate, renderChanList: renderLists, updateTitle: () => {},
     photos, // foto de perfil: viaja directamente entre amigos
+    myProfile: () => ({ first: state.account?.firstName, last: state.account?.lastName }),
+    onPeerProfile: (w, p) => {
+      const f = state.friends.get(String(w.peer.cid));
+      if (f) { if (p.nick) f.nick = p.nick; if (p.first !== undefined) { f.first = p.first; f.last = p.last; } }
+      renderLists();
+    },
     ensureIce: () => loadIceServers(SUPABASE_URL, SUPABASE_KEY),
     findPerson: (nick) => {
       const f = [...state.friends.values()].find((x) => x.status === 'accepted' && x.nick.toLowerCase() === nick.toLowerCase());
@@ -371,6 +377,7 @@ function renderShell() {
       <header class="m-head">
         <span class="m-brand">${logoSvg(30, 'hd')}<b class="ugc">${APP_NAME}</b></span>
         <span class="m-conn" id="m-conn"></span>
+        <button class="me-photo" id="me-photo" title="Mi perfil">${photos.avatar('me', state.nick)}</button>
         <button class="icon-btn" id="menu-btn" title="Opciones">${icon('dots')}</button>
       </header>
       <div class="update-strip hidden" id="update-strip"></div>
@@ -415,6 +422,7 @@ function renderShell() {
   stickToBottom(document.getElementById('log'));
   document.getElementById('m-tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); };
   document.getElementById('menu-btn').onclick = (e) => accountMenu(e.currentTarget);
+  document.getElementById('me-photo').onclick = () => profileSheet();
   document.getElementById('add-friend').onclick = addFriendDialog;
   document.getElementById('m-list').onclick = onListClick;
   document.getElementById('back-btn').onclick = () => activate('status');
@@ -753,9 +761,7 @@ function chatMenu(anchor) {
 function accountMenu(anchor) {
   const a = state.account;
   openMenu(anchor, [
-    { label: t('Mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
-    { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
-    { label: t('Mi foto'), icon: 'image', hint: t(photos.mine() ? 'La ven tus amigos en los privados' : 'Sin foto'), run: photoMenu },
+    { label: t('Mi perfil'), lead: photos.avatar('me', a.nick), hint: `${a.firstName} ${a.lastName} · ${fmtNumber(a.number)}`, run: profileSheet },
     { label: t('Tamaño de letra'), icon: 'edit', hint: t(FONT_LABELS[display.font()]), run: fontMenu },
     { label: t('Fondo del chat'), icon: 'sparkle', hint: t(display.wall() === 'foto' ? 'Foto propia' : WALLPAPERS[display.wall()].label), run: wallMenu },
     { label: t('Idioma'), icon: 'globe', hint: LANGS[getLang()], run: () => languageMenu(() => renderLists()) },
@@ -768,16 +774,31 @@ function accountMenu(anchor) {
   ], `<b class="ugc">${esc(a.nick)}</b><small><span class="ugc">${esc(a.email || '')}</span> · v${esc(APP_VERSION)}</small>`);
 }
 /* ---------- Foto, letra y fondo ---------- */
-function photoMenu() {
+/** Mi perfil: cómo me ven mis amigos (foto, nick, nombre) y opciones para cambiarlo. */
+function profileSheet() {
+  const a = state.account;
   const has = !!photos.mine();
   openMenu(null, [
     { label: t(has ? 'Cambiar foto' : 'Elegir foto'), icon: 'image', run: async () => {
-      const img = await pickImage({ max: 256, square: true, quality: 0.8 });
-      if (!img) return;
-      photos.setMine(img); dm?.broadcastPhoto(); toast(t('Foto guardada. La verán tus amigos al hablar contigo.'));
+      const r = await chooseAndEditPhoto(t);
+      if (!r) return profileSheet();
+      photos.setMine(r.photo, r.source); dm?.broadcastPhoto(); toast(t('Foto guardada. La verán tus amigos al hablar contigo.'));
+      profileSheet();
     } },
-    ...(has ? [{ label: t('Quitar foto'), icon: 'trash', danger: true, run: () => { photos.setMine(null); dm?.broadcastPhoto(); } }] : []),
-  ], `<div class="my-photo-row">${photos.avatar('me', state.nick)}<span><b>${esc(t('Mi foto'))}</b><small>${esc(t('No se guarda en ningún servidor: va directamente a tus amigos cuando hablan en privado.'))}</small></span></div>`);
+    ...(has ? [
+      { label: t('Ajustar foto'), icon: 'expand', run: async () => {
+        const src = photos.mineSource() || photos.mine();
+        const photo = await editPhoto(src, t);
+        if (photo) { photos.setMine(photo); dm?.broadcastPhoto(); }
+        profileSheet();
+      } },
+      { label: t('Quitar foto'), icon: 'trash', danger: true, run: () => { photos.setMine(null); dm?.broadcastPhoto(); profileSheet(); } },
+    ] : []),
+    '-',
+    { label: t('Nombre y apellido'), icon: 'edit', hint: `${a.firstName} ${a.lastName}`, run: editNameDialog },
+    { label: t('Copiar mi número'), icon: 'copy', hint: fmtNumber(a.number), run: copyNumber },
+  ], `<div class="profile-card">${photos.avatar('me', a.nick)}<b class="ugc">${esc(a.nick)}</b><span class="ugc">${esc(`${a.firstName} ${a.lastName}`)}</span>
+    <small>${esc(t('Así te ven tus amigos en los privados. La foto no se guarda en ningún servidor.'))}</small></div>`);
 }
 function fontMenu() {
   openMenu(null, Object.keys(FONT_SIZES).map((k) => ({ label: t(FONT_LABELS[k]), chosen: display.font() === k, lead: `<b class="fs-sample" style="font-size:${FONT_SIZES[k]}em">Aa</b>`, run: () => display.setFont(k) })), esc(t('Tamaño de letra')));
@@ -791,7 +812,9 @@ function wallMenu() {
     } },
   ], esc(t('Fondo del chat')));
 }
-photos.onChange(() => { renderLists(); const w = state.windows.get(state.active); if (w) dm?.onActivate(w); });
+photos.onChange(() => {
+  const me = document.getElementById('me-photo'); if (me) me.innerHTML = photos.avatar('me', state.nick);
+  renderLists(); const w = state.windows.get(state.active); if (w) dm?.onActivate(w); });
 
 async function editNameDialog() {
   const a = state.account;
@@ -805,7 +828,9 @@ async function editNameDialog() {
   const { error } = await supabase.rpc('set_my_name', { p_first: v.first.trim(), p_last: v.last.trim() });
   if (error) return toast(error.message);
   a.firstName = v.first.trim(); a.lastName = v.last.trim();
+  dm?.broadcastProfile(); // a los amigos conectados les llega al instante
   toast(t('Guardado.'));
+  profileSheet();
 }
 function languageMenu(after) {
   openMenu(null, Object.entries(LANGS).map(([code, name]) => ({ label: name, run: () => { setLang(code); retranslate(); after?.(); } })), esc(t('Idioma')));

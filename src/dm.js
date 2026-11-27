@@ -109,6 +109,13 @@ export function createDM(ctx) {
   }
   /** Al cambiar mi foto: se la envío a quien tenga un privado abierto conmigo. */
   function broadcastPhoto() { for (const w of state.windows.values()) if (w.kind === 'dm' && w.status === 'open') sendPhoto(w); }
+  // Nick y nombre: a los amigos se les envían al conectar y cada vez que cambian (así se ven al instante)
+  function sendProfile(w) {
+    const p = w.via === 'user' && ctx.myProfile?.();
+    if (!p || !(w.dc?.readyState === 'open' || w.relay)) return;
+    sendJSON(w, { t: 'profile', nick: state.nick, first: p.first || '', last: p.last || '' });
+  }
+  function broadcastProfile() { for (const w of state.windows.values()) if (w.kind === 'dm' && w.status === 'open') { sendProfile(w); sendJSON(w, { t: 'nick', nick: state.nick }); } }
   const isIdle = (w) => ['closed', 'rejected', 'offline'].includes(w.status); // sin conexión en curso
   const findByPeer = (cid) => dmWindows().find((w) => w.peer.cid === cid && w.status !== 'closed' && w.status !== 'rejected');
   const canMail = (w) => w.via === 'user' && !!ctx.mailbox; // amigos: se puede escribir aunque no estén conectados
@@ -423,6 +430,7 @@ export function createDM(ctx) {
       w.retries = 0;
       setStatus(w, 'open');
       sendPhoto(w);
+      sendProfile(w);
       if (restored) sysLine(w, `${icon('lock')} ` + esc(t('Conexión directa restablecida: vuelve el cifrado de extremo a extremo.')), 'join');
       else sysLine(w, `Conexión directa con <b>${esc(w.peer.nick)}</b>. Los mensajes, archivos y llamadas van cifrados de extremo a extremo y no se guardan en ningún sitio.`, 'join');
       if (w.autoCall !== undefined) { const v = w.autoCall; delete w.autoCall; setTimeout(() => startCall(w, v), 300); }
@@ -459,6 +467,7 @@ export function createDM(ctx) {
     if (announce) w.rt.send({ type: 'broadcast', event: 'relay', payload: { t: 'relay-on', ...route(w) } });
     if (w.status !== 'away') setStatus(w, 'open');
     sendPhoto(w);
+    sendProfile(w);
     sysLine(w, `${icon('unlock')} ` + esc(t(w.everDirect
       ? 'Se perdió la conexión directa. Mientras se intenta recuperar, la conversación sigue a través del servidor (sin cifrado de extremo a extremo; nada se guarda). Las llamadas no están disponibles en este modo.'
       : 'No fue posible la conexión directa entre sus redes. La conversación continúa a través del servidor: los mensajes no se guardan, pero no van cifrados de extremo a extremo. Las llamadas no están disponibles en este modo.')), 'err');
@@ -537,9 +546,20 @@ export function createDM(ctx) {
       case 'read': (m.mids || []).forEach((id) => setTick(w, id, 'read')); return;
       case 'nick': {
         const old = w.peer.nick;
-        w.peer.nick = w.name = String(m.nick || old).slice(0, 20);
+        const nick = String(m.nick || old).slice(0, 20);
+        if (nick === old) return;
+        w.peer.nick = w.name = nick;
         sysLine(w, `<b>${esc(old)}</b> ahora se llama <b>${esc(w.peer.nick)}</b>`);
         if (state.active === w.key) renderHeader(w);
+        ctx.onPeerProfile?.(w, { nick });
+        ctx.renderChanList();
+        return;
+      }
+      case 'profile': {
+        if (w.via !== 'user') return; // nombre y apellido: solo entre amigos
+        const p = { nick: String(m.nick || w.peer.nick).slice(0, 20), first: String(m.first || '').slice(0, 60), last: String(m.last || '').slice(0, 60) };
+        if (p.nick !== w.peer.nick) { w.peer.nick = w.name = p.nick; if (state.active === w.key) renderHeader(w); }
+        ctx.onPeerProfile?.(w, p);
         ctx.renderChanList();
         return;
       }
@@ -1200,7 +1220,7 @@ export function createDM(ctx) {
   // Diagnóstico (consola del navegador: __dmDebug())
   window.__dmDebug = () => dmWindows().map((w) => ({ peer: w.peer.nick, role: w.role, status: w.status, relay: !!w.relay, everDirect: !!w.everDirect, retries: w.retries || 0, rt: w.rt?.state, pc: w.pc?.connectionState, ice: w.pc?.iceConnectionState, sig: w.pc?.signalingState, dc: w.dc?.readyState, log: w.dbg }));
   return {
-    init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, sendText, sendFile, sendSticker, startVoice, stopVoice,
+    init, requestPrivate, acceptExternal, receiveMail, onActivate, broadcastPhoto, broadcastProfile, sendText, sendFile, sendSticker, startVoice, stopVoice,
     startCall: (w, video) => startCall(w, video), closeWindow, closeAll, onNickChange,
     statusText,
   };

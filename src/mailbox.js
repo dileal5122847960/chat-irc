@@ -83,9 +83,14 @@ export function createMailbox({ supabase, platform, version, deviceName }) {
       try { items.push({ device: d.device, body: await encryptFor(d.public_key, text) }); } catch { /* clave no válida */ }
     }
     if (!items.length) return { ok: false, reason: 'nodevices' };
-    const r = await supabase.rpc('mail_send', { p_to: Number(toNumber), p_items: items });
-    if (r.error) return { ok: false, reason: r.error.message };
-    return { ok: r.data > 0, reason: r.data > 0 ? '' : 'full' };
+    // En tandas de 20 copias (el servidor no acepta más por llamada)
+    let saved = 0, lastError = '';
+    for (let i = 0; i < items.length; i += 20) {
+      const r = await supabase.rpc('mail_send', { p_to: Number(toNumber), p_items: items.slice(i, i + 20) });
+      if (r.error) lastError = r.error.message; else saved += r.data || 0;
+    }
+    if (!saved) return { ok: false, reason: lastError || 'full' };
+    return { ok: true, reason: '' };
   }
 
   /** Recoge (y borra del servidor) los mensajes de este dispositivo. */

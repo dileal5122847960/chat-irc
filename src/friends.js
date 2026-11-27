@@ -150,7 +150,15 @@ export function createFriends(ctx) {
   }
   const isFriend = (number) => friends.some((f) => String(f.user_number) === String(number) && f.status === 'accepted');
 
+  /** Un amigo cambió su nick o su nombre (llegó por el privado): se refleja sin esperar a la base de datos. */
+  function updateLocal(number, p) {
+    const f = friends.find((x) => String(x.user_number) === String(number));
+    if (!f) return;
+    if (p.nick) f.nick = p.nick;
+    if (p.first !== undefined) { f.first_name = p.first; f.last_name = p.last; }
+    render();
+  }
   const nickOf = (number) => friends.find((f) => String(f.user_number) === String(number))?.nick;
 
-  return { start, stop, open, refresh, notify, isFriend, nickOf };
+  return { start, stop, open, refresh, notify, isFriend, nickOf, updateLocal };
 }

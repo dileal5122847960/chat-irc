@@ -454,6 +454,11 @@ const ENTRIES = [
   ['Lavanda', 'Lavender', 'Lavanda', 'Lavande', 'Lavanda'],
   ['Arena', 'Sand', 'Areia', 'Sable', 'Sabbia'],
   ['Una foto mía…', 'A photo of mine…', 'Uma foto minha…', 'Une de mes photos…', 'Una mia foto…'],
+  ['Mi perfil', 'My profile', 'Meu perfil', 'Mon profil', 'Il mio profilo'],
+  ['Ajustar foto', 'Adjust photo', 'Ajustar foto', 'Ajuster la photo', 'Regola foto'],
+  ['Arrastra para moverla y usa el control para acercarla o alejarla.', 'Drag to move it and use the slider to zoom in or out.', 'Arraste para movê-la e use o controle para aproximar ou afastar.', 'Fais-la glisser pour la déplacer et utilise le curseur pour zoomer.', 'Trascinala per spostarla e usa il cursore per ingrandirla o rimpicciolirla.'],
+  ['Copiar mi número', 'Copy my number', 'Copiar meu número', 'Copier mon numéro', 'Copia il mio numero'],
+  ['Así te ven tus amigos en los privados. La foto no se guarda en ningún servidor.', 'This is how your friends see you in private chats. The photo is not stored on any server.', 'É assim que seus amigos veem você nos privados. A foto não fica guardada em nenhum servidor.', 'C’est ainsi que tes amis te voient en privé. La photo n’est stockée sur aucun serveur.', 'Così ti vedono i tuoi amici nelle chat private. La foto non viene salvata su nessun server.'],
 ];
 
 // Textos con partes variables: [expresión regular sobre el español, inglés, portugués, francés, italiano]
